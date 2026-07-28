@@ -1,0 +1,19 @@
+{
+  "name": "iptv-redirect-api",
+  "version": "1.0.0",
+  "description": "IPTV redirect microservice for Bilibili/Douyin/Kuaishou live streams",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/redirect_api.js",
+    "test": "node --test tests/*.test.js",
+    "test:server": "node --test tests/server.test.js",
+    "test:bilibili": "node --test tests/bilibili.test.js",
+    "test:douyin": "node --test tests/douyin.test.js",
+    "test:kuaishou": "node --test tests/kuaishou.test.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "private": true,
+  "license": "UNLICENSED"
+}

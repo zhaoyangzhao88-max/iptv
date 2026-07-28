@@ -1,0 +1,13 @@
+[
+  {
+    "name": "CCTV-1",
+    "group": "央视频道",
+    "urls": [
+      "http://live.com/cctv.m3u8"
+    ],
+    "delay_ms": 15,
+    "logo": "https://iptv-org.github.io/logos/CCTV1.png",
+    "tvg_id": "CCTV1.cn",
+    "is_multicast": false
+  }
+]

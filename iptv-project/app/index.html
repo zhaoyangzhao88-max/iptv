@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IPTV 极客流媒体控制台</title>
+  <link rel="stylesheet" href="./style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <div id="custom-titlebar">
+    <span class="app-title">📺 OWL IPTV 极客控制台</span>
+    <div class="window-controls">
+      <button id="btn-win-settings" class="win-btn" title="播放设置">⚙</button>
+      <button id="btn-win-min" class="win-btn">-</button>
+      <button id="btn-win-close" class="win-btn">×</button>
+    </div>
+  </div>
+  <main class="app-shell" aria-label="IPTV 播放控制台">
+    <div class="left-panel">
+      <aside id="category-list" class="category-list" aria-label="分类导航">
+        <div class="panel-title">分类导航</div>
+        <button class="category-item focused" type="button">全部频道</button>
+        <button class="category-item" type="button">央视</button>
+        <button class="category-item" type="button">卫视</button>
+        <button class="category-item" type="button">地方台</button>
+        <button class="category-item" type="button">电影</button>
+        <button class="category-item" type="button">体育</button>
+      </aside>
+      <div class="diagnostic-bar">
+        <div class="action-buttons-container">
+          <button id="btn-diagnostic" class="btn-tv" type="button">⚙️ 智能巡检</button>
+          <button id="btn-reset-filters" class="btn-tv" type="button">🔄 恢复隐藏</button>
+        </div>
+      </div>
+    </div>
+
+    <section id="channel-grid" class="channel-grid" aria-label="频道网格">
+      <div class="grid-spacer" aria-hidden="true"></div>
+    </section>
+
+    <aside id="player-container" class="player-container" aria-label="播放器">
+      <section class="video-frame" aria-label="视频播放区域">
+        <video id="video-element" controls playsinline></video>
+      </section>
+
+      <section class="stats-panel" aria-label="播放信息面板">
+        <div class="stat-card">
+          <span class="stat-label">当前台号</span>
+          <strong id="current-channel">--</strong>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">延迟</span>
+          <strong id="current-latency">-- ms</strong>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">累计观看时长</span>
+          <strong id="watch-duration">00:00:00</strong>
+        </div>
+      </section>
+    </aside>
+  </main>
+  <!-- Settings Modal (Phase 5) -->
+  <div id="settings-overlay" class="modal-overlay" style="display:none;">
+    <div class="modal-container">
+      <div class="modal-header">
+        <span class="modal-title">⚙️ 播放设置中心</span>
+        <button id="btn-settings-close" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="setting-group">
+          <label class="setting-label">
+            <input type="checkbox" id="toggle-multicast" />
+            <span>显示组播源频道 (/udp, /rtp)</span>
+          </label>
+          <p class="setting-hint">组播源通常为酒店/专网内部地址，外网访问速度较慢。默认隐藏。</p>
+        </div>
+        <div class="setting-group">
+          <label class="setting-label" for="input-m3u-url">自定义 M3U 订阅源 URL</label>
+          <input type="url" id="input-m3u-url" class="setting-input" placeholder="https://example.com/iptv.m3u" />
+          <button id="btn-apply-m3u" class="btn-tv setting-btn">应用订阅源</button>
+        </div>
+        <div class="setting-group">
+          <label class="setting-label">路由选择策略</label>
+          <select id="select-route-strategy" class="setting-select">
+            <option value="latency-first">延迟优先 (默认)</option>
+            <option value="source-quality">源质量优先</option>
+          </select>
+          <p class="setting-hint">延迟优先：自动播放测速最快的线路。源质量优先：优先播放已知稳定源。</p>
+        </div>
+        <div class="setting-group">
+          <button id="btn-clear-cache" class="btn-tv setting-btn setting-btn-danger">🗑️ 一键清除全部缓存</button>
+          <p class="setting-hint">清除所有本地观看统计和频道缓存数据。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="diagnostic-overlay">
+    <div class="overlay-content">
+      <h2>📺 智能播放感知体检中</h2>
+      <p>按需体检模式：仅检测当前分类的前 30 个推荐频道</p>
+      <div class="progress-bar-container"><div id="diagnostic-progress"></div></div>
+      <p id="diagnostic-status">当前正在拨测：-</p>
+    </div>
+  </div>
+</body>
+</html>

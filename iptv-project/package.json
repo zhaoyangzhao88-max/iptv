@@ -1,0 +1,33 @@
+{
+  "name": "owl-iptv-player",
+  "version": "1.0.0",
+  "description": "智能电视盒风格精品 IPTV 播放客户端",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.owl.iptv.player",
+    "productName": "OwlIPTV",
+    "win": {
+      "target": ["portable"]
+    },
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "app/**/*",
+      "data/channels.json",
+      "node_modules/**/*"
+    ],
+    "asar": true,
+    "compression": "maximum"
+  }
+}

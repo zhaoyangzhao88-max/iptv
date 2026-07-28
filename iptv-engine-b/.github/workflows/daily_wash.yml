@@ -1,0 +1,89 @@
+name: Daily Wash Pipeline
+
+on:
+  schedule:
+    # 定时调度：每 6 小时自动唤醒云端机器人运行一次
+    - cron: '0 */6 * * *'
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  wash_and_export:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r python_engine/requirements.txt
+          pip install aiohttp  # 用于异步测速
+
+      - name: Run IPTV Engine (Wash + Speed Test)
+        run: |
+          export PYTHONPATH=$PYTHONPATH:.
+          python python_engine/src/main.py
+
+      - name: Export Cleaned M3U
+        run: |
+          export PYTHONPATH=$PYTHONPATH:.
+          python -c "
+import json, os
+
+# 读取主流程生成的 channels.json
+data_path = os.path.join('data', 'channels.json')
+with open(data_path, 'r', encoding='utf-8') as f:
+    channels = json.load(f)
+
+# 生成标准 M3U 格式，跳过 is_multicast 频道（组播对公网用户不可用）
+lines = ['#EXTM3U']
+for ch in channels:
+    # 跳过无 URL 或组播频道
+    urls = ch.get('urls', [])
+    if not urls:
+        continue
+    if ch.get('is_multicast', False):
+        continue
+    name = ch.get('name', '')
+    group = ch.get('group', '')
+    logo = ch.get('logo', '')
+    tvg_id = ch.get('tvg_id', '')
+    attrs = []
+    if tvg_id:
+        attrs.append(f'tvg-id=\"{tvg_id}\"')
+    if name:
+        attrs.append(f'tvg-name=\"{name}\"')
+    if logo:
+        attrs.append(f'tvg-logo=\"{logo}\"')
+    if group:
+        attrs.append(f'group-title=\"{group}\"')
+    lines.append(f'#EXTINF:-1 {\" \".join(attrs)},{name}')
+    lines.append(urls[0])
+
+m3u_path = os.path.join('data', 'cleaned_iptv_list.m3u')
+with open(m3u_path, 'w', encoding='utf-8') as f:
+    f.write('\n'.join(lines) + '\n')
+print(f'M3U written: {m3u_path} ({len(channels)} total, {sum(1 for c in channels if c.get(\"urls\"))} with URLs, skipped multicast)')
+"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: iptv-output
+          path: |
+            data/channels.json
+            data/cleaned_iptv_list.m3u
+
+      - name: Commit and Push Changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/channels.json data/cleaned_iptv_list.m3u python_engine/data/history_scores.json
+          git commit -m "chore(data): daily wash + speed test pipeline [skip ci]" || echo "No changes to commit"
+          git push

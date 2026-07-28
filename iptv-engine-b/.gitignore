@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.env
+python_engine/data/history_scores.json
+python_engine/data/iptv_org_cache.json
