@@ -19,25 +19,26 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+          cache-dependency-path: iptv-engine-b/python_engine/requirements.txt
 
       - name: Install Dependencies
         run: |
-          pip install -r python_engine/requirements.txt
+          pip install -r iptv-engine-b/python_engine/requirements.txt
           pip install aiohttp  # 用于异步测速
 
       - name: Run IPTV Engine (Wash + Speed Test)
         run: |
-          export PYTHONPATH=$PYTHONPATH:.
-          python python_engine/src/main.py
+          export PYTHONPATH=$PYTHONPATH:iptv-engine-b
+          python iptv-engine-b/python_engine/src/main.py
 
       - name: Export Cleaned M3U
         run: |
-          export PYTHONPATH=$PYTHONPATH:.
+          export PYTHONPATH=$PYTHONPATH:iptv-engine-b
           python -c "
 import json, os
 
 # 读取主流程生成的 channels.json
-data_path = os.path.join('data', 'channels.json')
+data_path = os.path.join('iptv-engine-b', 'data', 'channels.json')
 with open(data_path, 'r', encoding='utf-8') as f:
     channels = json.load(f)
 
@@ -66,7 +67,7 @@ for ch in channels:
     lines.append(f'#EXTINF:-1 {\" \".join(attrs)},{name}')
     lines.append(urls[0])
 
-m3u_path = os.path.join('data', 'cleaned_iptv_list.m3u')
+m3u_path = os.path.join('iptv-engine-b', 'data', 'cleaned_iptv_list.m3u')
 with open(m3u_path, 'w', encoding='utf-8') as f:
     f.write('\n'.join(lines) + '\n')
 print(f'M3U written: {m3u_path} ({len(channels)} total, {sum(1 for c in channels if c.get(\"urls\"))} with URLs, skipped multicast)')
@@ -77,13 +78,13 @@ print(f'M3U written: {m3u_path} ({len(channels)} total, {sum(1 for c in channels
         with:
           name: iptv-output
           path: |
-            data/channels.json
-            data/cleaned_iptv_list.m3u
+            iptv-engine-b/data/channels.json
+            iptv-engine-b/data/cleaned_iptv_list.m3u
 
       - name: Commit and Push Changes
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/channels.json data/cleaned_iptv_list.m3u python_engine/data/history_scores.json
+          git add iptv-engine-b/data/channels.json iptv-engine-b/data/cleaned_iptv_list.m3u iptv-engine-b/python_engine/data/history_scores.json
           git commit -m "chore(data): daily wash + speed test pipeline [skip ci]" || echo "No changes to commit"
           git push

@@ -5,7 +5,12 @@ const { fork } = require('child_process');
 let nodeServerProcess = null;
 
 function startNodeMicroservice() {
-  const serverPath = path.join(__dirname, '..', 'iptv-engine-b', 'node_api', 'src', 'redirect_api.js');
+  let serverPath;
+  if (app.isPackaged) {
+    serverPath = path.join(process.resourcesPath, 'node_api', 'src', 'redirect_api.js');
+  } else {
+    serverPath = path.join(__dirname, '..', 'iptv-engine-b', 'node_api', 'src', 'redirect_api.js');
+  }
 
   try {
     nodeServerProcess = fork(serverPath, [], {

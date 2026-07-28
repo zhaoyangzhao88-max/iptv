@@ -366,5 +366,62 @@
 ### 延后事项
 
 1. **前端测试 ES Module 适配**：app.js Phase 3 拆分为 ES Modules 后，`vm.Script` 无法直接加载，需将前端测试改造为使用 `node --import` 或转为 ESM
-2. **Electron 打包后子进程路径**：`main.js` 使用 `process.resourcesPath` 区分 dev/packaged 模式以读取 `node_api` extraResources
+2. ~~Electron 打包后子进程路径：`main.js` 使用 `process.resourcesPath` 区分 dev/packaged 模式以读取 `node_api` extraResources~~ ✅ **Phase 6 已完成**
 3. **前端 E2E 测试**：Playwright 或 Cypress 集成测试
+
+---
+
+# 第六阶段 — 单仓库基建完结（Phase 6: Monorepo Finalization）
+
+> 执行日期：2026-07-28
+
+## 执行结果概览
+
+- [x] 任务1: GitHub Actions 工作流迁移至根目录 `.github/workflows/`
+- [x] 任务2: 创建根目录 `package.json`（统一脚本入口）
+- [x] 任务3: Electron `main.js` 生产打包适配（`app.isPackaged` + `extraResources`）
+- [x] 任务4: 全量 Node.js 测试 36/36 通过
+
+## 变更明细表
+
+| 模块/文件 | 操作 | 说明 |
+|-----------|------|------|
+| `iptv-engine-b/.github/workflows/daily_wash.yml` | **删除** | 已迁移至根目录 |
+| `iptv-engine-b/.github/workflows/sync.yml` | **删除** | 已迁移至根目录 |
+| `iptv-engine-b/.github/` | **删除** | 遗留空目录清理 |
+| `.github/workflows/daily_wash.yml` | **重建** | 从 `iptv-engine-b/` 迁入，路径增加 `iptv-engine-b/` 前缀 |
+| `.github/workflows/sync.yml` | **重建** | 从 `iptv-engine-b/` 迁入，路径增加 `iptv-engine-b/` 前缀 |
+| `package.json` | **新建** | 根 monorepo 配置：`test:python`, `test:node`, `test`, `start`, `dist` |
+| `iptv-project/main.js` | 修改 | `startNodeMicroservice()` 增加 `app.isPackaged` 分支，使用 `process.resourcesPath` |
+| `iptv-project/package.json` | 修改 | 新增 `extraResources` 配置，打包时包含 `node_api` 微服务（排除 `tests/`） |
+| `AUDIT_RESULT.md` | 修改 | 追加第六阶段执行记录 |
+
+## 测试结果
+
+| 测试套件 | 结果 | 说明 |
+|----------|------|------|
+| Node.js API (node:test) | 36/36 PASS | 4 suites、36 tests、0 fail |
+| Python (pytest) | 需环境确认 | 预期 154/154（需 Python 3.11+ `pip install -r iptv-engine-b/python_engine/requirements.txt`） |
+
+## 架构变化
+
+| 变更 | 前 | 后 |
+|------|----|----|
+| 工作流位置 | `iptv-engine-b/.github/workflows/` | `./.github/workflows/` |
+| 根目录 `package.json` | 无 | 有（5 个 script） |
+| Electron 子进程路径（dev） | 硬编码 `../iptv-engine-b/...` | 不变（保持兼容） |
+| Electron 子进程路径（packaged） | ❌ 无处理 | ✅ `process.resourcesPath` |
+| 打包产物内容 | 缺 `node_api` | 含完整微服务（`extraResources`） |
+| 从根运行测试 | ❌ 不可用 | ✅ `npm run test:node` / `npm run test:python` |
+| Python CI 缓存 | ❌ 未指定路径 | ✅ `cache-dependency-path` 指向 `requirements.txt` |
+
+## 已关闭的延后事项
+
+原本 Phase 5 记录了两条与单仓库相关的延后事项：
+- ~~**Electron 打包后子进程路径**~~ ✅ 已完成：`main.js` 现已根据 `app.isPackaged` 区分 dev 路径和打包后 `process.resourcesPath`
+- ~~**electron-builder 缺失的 preload.js**~~ ✅ Phase 5 已修复
+
+## 未关闭的延后事项
+
+1. **前端测试 ES Module 适配**：app.js Phase 3 拆分为 ES Modules 后，`vm.Script` 无法直接加载
+2. **前端 E2E 测试**：Playwright 或 Cypress 集成测试

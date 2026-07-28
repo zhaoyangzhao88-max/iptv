@@ -28,6 +28,13 @@
       "node_modules/**/*"
     ],
     "asar": true,
-    "compression": "maximum"
+    "compression": "maximum",
+    "extraResources": [
+      {
+        "from": "../iptv-engine-b/node_api",
+        "to": "node_api",
+        "filter": ["**/*", "!tests/**"]
+      }
+    ]
   }
 }

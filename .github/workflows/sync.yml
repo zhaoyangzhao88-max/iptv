@@ -18,17 +18,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip' # 自动在云端建立 pip 缓存，加速运行，保护 Actions 时间额度
+          cache: 'pip'
+          cache-dependency-path: iptv-engine-b/python_engine/requirements.txt
 
       - name: Install Dependencies
         run: |
-          pip install -r python_engine/requirements.txt
+          pip install -r iptv-engine-b/python_engine/requirements.txt
 
       - name: Run IPTV Engine Core Pipeline
         run: |
           # 注入 PYTHONPATH，彻底清除 Python 包路径导入的玄学崩溃
-          export PYTHONPATH=$PYTHONPATH:.
-          python python_engine/src/main.py
+          export PYTHONPATH=$PYTHONPATH:iptv-engine-b
+          python iptv-engine-b/python_engine/src/main.py
 
       - name: Commit and Push Database Changes
         run: |
@@ -36,7 +37,7 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
           # 仅在我们的"功德簿"（history_scores.json）由于积分扣分发生变动时才提交，绝对避免空提交
-          git add python_engine/data/history_scores.json
+          git add iptv-engine-b/python_engine/data/history_scores.json
 
           git commit -m "chore(data): auto sync reputation scores [skip ci]" || echo "No changes to commit"
           git push

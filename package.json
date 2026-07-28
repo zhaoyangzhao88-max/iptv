@@ -1,0 +1,16 @@
+{
+  "name": "iptv-monorepo",
+  "version": "1.0.0",
+  "description": "IPTV all-stack monorepo: data engine (Python/Node) + Electron player",
+  "private": true,
+  "scripts": {
+    "start": "cd iptv-project && npm start",
+    "dist": "cd iptv-project && npm run dist",
+    "test": "npm run test:node && npm run test:python",
+    "test:python": "cd iptv-engine-b && python -m pytest",
+    "test:node": "cd iptv-engine-b/node_api && node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
