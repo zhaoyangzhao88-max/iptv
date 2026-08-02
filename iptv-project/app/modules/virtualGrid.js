@@ -204,7 +204,7 @@ export function renderChannels() {
   state.localOverrides = loadLocalOverrides();
   state.currentChannels = state.currentChannels.filter((channel) => {
     if (channel.hidden) return false;
-    const ov = state.localOverrides.channels[channel.name];
+    const ov = state.localOverrides.channels[channel.channelKey || channel.name] || state.localOverrides.channels[channel.name];
     if (ov && ov.hidden === true) return false;
     // Multicast filter: hide if user disabled multicast display
     if (channel.is_multicast) {

@@ -4,8 +4,7 @@ import { DATA_FALLBACK_URL, CONFIG, ROUTE_FAILURE_LIMIT,
 import { electronAPI } from './constants.js';
 import { state, loadLocalOverrides, normalizeLocalOverrides,
   readJsonFromStorage, writeJsonToStorage,
-  isUserActiveRecently, isRenderPending, pendingRenderTimer,
-  recordUserActivity, lastUserActivityTime } from './state.js';
+  isUserActiveRecently } from './state.js';
 import { computeTopRecommendations, prepareRecommendations } from './recommend.js';
 
 // ─── Data loading ──────────────────────────────────────
@@ -53,46 +52,125 @@ export function isGarbageChannelName(name) {
 }
 
 export function toFiniteNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
 
-export function normalizeChannelSource(data) {
-  const source = Array.isArray(data) ? data : data && Array.isArray(data.channels) ? data.channels : [];
+export function makeSourceId(value = 'public') {
+  const sourceId = String(value || 'public').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  return sourceId || 'public';
+}
+
+export function makeChannelKey(sourceId, name) {
+  return `${makeSourceId(sourceId)}:${String(name || '').trim().toLowerCase()}`;
+}
+
+function hasUsableRoute(route) {
+  const rawUrl = typeof route === 'string' ? route : route && route.url;
+  return typeof rawUrl === 'string' && rawUrl.trim().length > 0;
+}
+
+function selectRouteSource(channel) {
+  if (Array.isArray(channel.urls) && channel.urls.some(hasUsableRoute)) {
+    return { key: 'urls', routes: channel.urls };
+  }
+  if (Array.isArray(channel.routes) && channel.routes.some(hasUsableRoute)) {
+    return { key: 'routes', routes: channel.routes };
+  }
+  if (typeof channel.url === 'string' && channel.url.trim()) {
+    return { key: 'url', routes: [{ url: channel.url, delay_ms: channel.delay_ms }] };
+  }
+  return { key: null, routes: undefined };
+}
+
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+export function normalizeChannelSource(data, sourceId = 'public') {
+  const envelope = data && !Array.isArray(data) ? data : null;
+  const resolvedSourceId = makeSourceId(envelope && envelope.sourceId ? envelope.sourceId : sourceId);
+  const source = Array.isArray(data) ? data : envelope && Array.isArray(envelope.channels) ? envelope.channels : [];
   return source
     .filter((channel) => channel && typeof channel === 'object')
-    .map((channel) => ({
-      name: String(channel.name || '').trim(),
-      group: String(channel.group || '未分组').trim() || '未分组',
-      urls: Array.isArray(channel.urls) ? channel.urls : undefined,
-      url: String(channel.url || '').trim() || undefined,
-      delay_ms: toFiniteNumber(channel.delay_ms),
-      logo: channel.logo ? String(channel.logo).trim() : undefined
-    }))
+    .map((channel) => {
+      const routeSource = selectRouteSource(channel);
+      const channelSourceId = makeSourceId(channel.sourceId || resolvedSourceId);
+      const channelName = String(channel.name || channel.title || '').trim();
+      const normalized = {
+        name: channelName,
+        sourceId: channelSourceId,
+        channelKey: String(channel.channelKey || makeChannelKey(channelSourceId, channelName)),
+        group: String(channel.group || '未分组').trim() || '未分组',
+        urls: routeSource.routes,
+        url: String(channel.url || '').trim() || undefined,
+        delay_ms: toFiniteNumber(channel.delay_ms),
+        logo: channel.logo ? String(channel.logo).trim() : undefined,
+        tvg_id: channel.tvg_id ? String(channel.tvg_id).trim() : undefined,
+        epg_id: channel.epg_id ? String(channel.epg_id).trim() : undefined,
+        is_multicast: Boolean(channel.is_multicast),
+        risk_flags: Array.isArray(channel.risk_flags) ? channel.risk_flags.map(String) : [],
+        source_tier: toFiniteNumber(channel.source_tier),
+        last_verified: channel.last_verified ? String(channel.last_verified).trim() : undefined
+      };
+      const providedFields = new Set(
+        ['group', 'delay_ms', 'logo', 'tvg_id', 'epg_id', 'is_multicast', 'risk_flags', 'source_tier', 'last_verified']
+          .filter((field) => hasOwn(channel, field))
+      );
+      if (routeSource.key) providedFields.add('urls');
+      if (typeof channel.url === 'string' && channel.url.trim()) providedFields.add('url');
+      Object.defineProperty(normalized, '__providedFields', {
+        value: providedFields,
+        enumerable: false,
+        configurable: true
+      });
+      return normalized;
+    })
     .filter((channel) => {
       if (isGarbageChannelName(channel.name)) return false;
-      if (!((channel.urls && channel.urls.length > 0) || channel.url)) return false;
+      if (!Array.isArray(channel.urls) || !channel.urls.some(hasUsableRoute)) return false;
       return true;
     });
 }
 
 export function normalizeChannels(data) {
-  return data.map((channel) => normalizeChannel(channel)).filter(Boolean);
+  return (Array.isArray(data) ? data : []).map((channel) => normalizeChannel(channel)).filter(Boolean);
 }
 
 function normalizeChannel(channel) {
   if (!channel || typeof channel !== 'object') return null;
   const name = String(channel.name || '').trim();
   const group = String(channel.group || '未分组').trim() || '未分组';
-  const override = state.localOverrides.channels[name] || {};
+  const overrides = state.localOverrides && state.localOverrides.channels
+    ? state.localOverrides.channels
+    : {};
+  const override = overrides[name] || {};
   if (!name || override.failed || override.failures >= ROUTE_FAILURE_LIMIT || override.hidden) return null;
   const routes = normalizeRoutes(channel, override);
   if (routes.length === 0) return null;
   const delayMs = toFiniteNumber(routes[0].delay_ms) ?? toFiniteNumber(channel.delay_ms) ?? 0;
-  return { name, group, url: routes[0].url, routes, delay_ms: delayMs, failed: false, failures: 0 };
+  return {
+    name,
+    group,
+    sourceId: makeSourceId(channel.sourceId || 'public'),
+    channelKey: channel.channelKey || makeChannelKey(channel.sourceId || 'public', name),
+    url: routes[0].url,
+    routes,
+    delay_ms: delayMs,
+    logo: channel.logo,
+    tvg_id: channel.tvg_id,
+    epg_id: channel.epg_id,
+    is_multicast: Boolean(channel.is_multicast),
+    risk_flags: Array.isArray(channel.risk_flags) ? channel.risk_flags.slice() : [],
+    source_tier: toFiniteNumber(channel.source_tier),
+    last_verified: channel.last_verified,
+    failed: false,
+    failures: 0
+  };
 }
 
-function normalizeRoutes(channel, override) {
+function normalizeRoutes(channel, override = {}) {
   const rawRoutes = Array.isArray(channel.urls) && channel.urls.length > 0
     ? channel.urls
     : channel.url
@@ -105,14 +183,15 @@ function normalizeRoutes(channel, override) {
   return sortRoutes(routes, override.routeOrder);
 }
 
-function normalizeRoute(route, index, channel, override) {
-  if (!route || typeof route !== 'object') return null;
-  const url = String(route.url || '').trim();
+function normalizeRoute(route, index, channel, override = {}) {
+  const rawUrl = typeof route === 'string' ? route : route && route.url;
+  const url = String(rawUrl || '').trim();
   if (!url) return null;
   const routeOverride = override.routes ? override.routes[url] : null;
   const routeFailed = Boolean(routeOverride && (routeOverride.failed || routeOverride.failures >= ROUTE_FAILURE_LIMIT));
   if (routeFailed) return null;
-  const delayMs = toFiniteNumber(route.delay_ms) ?? toFiniteNumber(channel.delay_ms) ?? 0;
+  const routeDelay = typeof route === 'object' ? route.delay_ms : undefined;
+  const delayMs = toFiniteNumber(routeDelay) ?? toFiniteNumber(channel.delay_ms) ?? 0;
   return { url, index, delay_ms: delayMs, failures: routeOverride ? routeOverride.failures : 0 };
 }
 
@@ -163,102 +242,147 @@ export function getInitialCategoryIndex() {
 
 // ─── Remote merge (第 7 课：云端静默数据合并) ──────────
 
-export async function fetchAndMergeRemoteChannels() {
+export function parseM3UText(text) {
+  const lines = String(text || '').split(/\r?\n/).map((line) => line.trim());
+  const channels = [];
+  let pending = null;
+  lines.forEach((line) => {
+    if (!line || /^#EXTM3U/i.test(line)) return;
+    if (/^#EXTINF/i.test(line)) {
+      const [, attributes = '', rawName = ''] = line.match(/^#EXTINF:-?\d+(?:\s+([^,]*))?,(.*)$/i) || [];
+      const name = rawName.trim();
+      if (!name || isGarbageChannelName(name)) return;
+      const groupMatch = attributes.match(/group-title="([^"]*)"/i);
+      const logoMatch = attributes.match(/tvg-logo="([^"]*)"/i);
+      pending = { name, group: groupMatch?.[1]?.trim() || '未分组', logo: logoMatch?.[1]?.trim() || undefined };
+      return;
+    }
+    if (!line.startsWith('#') && pending) {
+      channels.push({ ...pending, url: line });
+      pending = null;
+    }
+  });
+  return normalizeChannelSource(channels, makeSourceId('private-' + text.slice(0, 12)));
+}
+
+export function setSourceEnabled(sourceId, enabled) {
+  const id = makeSourceId(sourceId);
+  const source = state.privateSources.find((item) => item.sourceId === id);
+  if (!source) return false;
+  source.enabled = Boolean(enabled);
+  state.sourceStatus[id] = { ...(state.sourceStatus[id] || {}), sourceId: id, enabled: source.enabled };
+  state.privateChannels = state.privateSources.filter((item) => item.enabled !== false).flatMap((item) => item.channels);
+  state.allChannels = [...state.publicChannels, ...state.privateChannels];
+  state.channels = normalizeChannels(state.allChannels);
+  state.channelByName = new Map(state.channels.map((channel) => [channel.name, channel]));
+  state.channelByKey = new Map(state.channels.map((channel) => [channel.channelKey, channel]));
+  state.categories = buildCategories();
+  return true;
+}
+
+export async function fetchAndMergeRemoteChannels(sourceUrl) {
+  const url = String(sourceUrl || CONFIG.remote_json_url).trim() || CONFIG.remote_json_url;
   let remoteData = null;
   try {
     if (typeof fetch === 'function') {
-      const resp = await fetch(CONFIG.remote_json_url, { cache: 'no-cache' });
+      const resp = await fetch(url, { cache: 'no-cache' });
       if (resp.ok) {
-        remoteData = await resp.json();
+        const contentType = resp.headers?.get?.('content-type') || '';
+        const raw = contentType.includes('json') || typeof resp.text !== 'function'
+          ? await resp.json()
+          : await resp.text();
+        remoteData = typeof raw === 'string' ? parseM3UText(raw) : raw;
       }
     }
   } catch (err) {
     console.warn('[OWL IPTV] 云端数据拉取失败，跳过本次静默更新。', err);
-    return;
+    return { ok: false, count: 0 };
   }
-  if (!remoteData) return;
+  if (!remoteData) return { ok: false, count: 0 };
 
-  const remoteNormalized = normalizeChannelSource(remoteData);
-  if (remoteNormalized.length === 0) return;
+  const remoteNormalized = Array.isArray(remoteData) && typeof remoteData[0] === 'object'
+    ? normalizeChannelSource(remoteData)
+    : normalizeChannelSource(remoteData);
+  if (remoteNormalized.length === 0) return { ok: false, count: 0 };
 
+  const isPrivateSource = Boolean(sourceUrl && String(sourceUrl).trim() && String(sourceUrl).trim() !== CONFIG.remote_json_url);
+  if (isPrivateSource) {
+    const sourceId = makeSourceId(url);
+    const existing = state.privateSources.filter((source) => source.sourceId !== sourceId);
+    state.privateSources = [...existing, { sourceId, url, enabled: true, channels: remoteNormalized }];
+    state.privateChannels = state.privateSources.filter((source) => source.enabled !== false).flatMap((source) => source.channels);
+    state.sourceStatus[sourceId] = { sourceId, url, enabled: true };
+    const combined = new Map(state.publicChannels.map((channel) => [channel.channelKey, channel]));
+    state.privateChannels.forEach((channel) => combined.set(channel.channelKey, channel));
+    state.allChannels = Array.from(combined.values());
+    state.channels = normalizeChannels(state.allChannels);
+    state.channelByName = new Map(state.channels.map((channel) => [channel.name, channel]));
+    state.channelByKey = new Map(state.channels.map((channel) => [channel.channelKey, channel]));
+    state.recommendedChannels = computeTopRecommendations(RECOMMENDATION_LIMIT);
+    state.categories = buildCategories();
+    state.categoryIndex = Math.min(state.categoryIndex, Math.max(0, state.categories.length - 1));
+    scheduleIdleRender();
+    return { ok: true, count: remoteNormalized.length, private: true };
+  }
+
+  state.publicChannels = remoteNormalized;
+  state.privateChannels = state.privateSources.filter((source) => source.enabled !== false).flatMap((source) => source.channels);
   const remoteMap = new Map();
-  remoteNormalized.forEach((ch) => { remoteMap.set(ch.name, ch); });
+  state.sourceStatus.public = { sourceId: 'public', enabled: true, url: CONFIG.remote_json_url };
+  state.publicChannels.forEach((ch) => { remoteMap.set(ch.name, ch); });
+  if (remoteMap.size === 0) return { ok: false, count: 0 };
 
   const currentMap = new Map();
   state.allChannels.forEach((ch) => { currentMap.set(ch.name, ch); });
-
   const playingName = state.currentChannelName;
   let playingChannelUpdated = false;
 
   remoteMap.forEach((remoteCh, name) => {
     const existing = currentMap.get(name);
-    if (existing) {
-      if (remoteCh.urls && remoteCh.urls.length > 0) existing.urls = remoteCh.urls;
-      if (remoteCh.url && !existing.urls) existing.url = remoteCh.url;
-      if (remoteCh.delay_ms != null) existing.delay_ms = remoteCh.delay_ms;
-      if (remoteCh.logo != null) existing.logo = remoteCh.logo;
-      if (name === playingName) {
-        const playingChannel = state.channelByName.get(name);
-        if (playingChannel) {
-          const freshRoutes = buildRoutesFromChannel(remoteCh);
-          if (freshRoutes.length > 0) {
-            playingChannel.routes = freshRoutes;
-            playingChannel.url = freshRoutes[0].url;
-            if (state.currentChannel && state.currentChannel.name === name) {
-              state.currentChannel.routes = freshRoutes;
-              state.currentChannel.url = freshRoutes[0].url;
-            }
-            playingChannelUpdated = true;
-          }
-        }
-      }
-    } else {
+    if (!existing) {
       currentMap.set(name, remoteCh);
+      return;
+    }
+    const providedFields = remoteCh.__providedFields || new Set(['urls']);
+    const mergedChannel = { ...existing };
+    for (const field of providedFields) {
+      if (field === 'urls' && (!Array.isArray(remoteCh.urls) || !remoteCh.urls.some(hasUsableRoute))) continue;
+      if (field === 'url' && (!remoteCh.url || !String(remoteCh.url).trim())) continue;
+      if (remoteCh[field] !== undefined && remoteCh[field] !== null) mergedChannel[field] = remoteCh[field];
+    }
+    currentMap.set(name, mergedChannel);
+    if (name === playingName) {
+      const playingChannel = state.channelByName.get(name);
+      const freshRoutes = buildRoutesFromChannel(mergedChannel);
+      if (playingChannel && freshRoutes.length > 0) {
+        playingChannel.routes = freshRoutes;
+        playingChannel.url = freshRoutes[0].url;
+        if (state.currentChannel && state.currentChannel.name === name) {
+          state.currentChannel.routes = freshRoutes;
+          state.currentChannel.url = freshRoutes[0].url;
+        }
+        playingChannelUpdated = true;
+      }
     }
   });
 
-  const toDelete = [];
-  currentMap.forEach((_, name) => { if (!remoteMap.has(name)) toDelete.push(name); });
-  toDelete.forEach((name) => { currentMap.delete(name); });
-
-  state.allChannels = Array.from(currentMap.values());
+  state.allChannels = [...Array.from(currentMap.values()), ...state.privateChannels];
+  if (playingChannelUpdated && playingName) {
+    const updated = state.allChannels.find((channel) => channel.name === playingName);
+    if (updated) state.currentChannel = { ...updated, routes: buildRoutesFromChannel(updated) };
+  }
   state.channels = normalizeChannels(state.allChannels);
   state.channelByName = new Map(state.channels.map((ch) => [ch.name, ch]));
   state.recommendedChannels = computeTopRecommendations(RECOMMENDATION_LIMIT);
   state.categories = buildCategories();
   state.categoryIndex = Math.min(state.categoryIndex, Math.max(0, state.categories.length - 1));
-  if (state.channelIndex >= state.currentChannels.length) {
-    state.channelIndex = Math.max(0, state.currentChannels.length - 1);
-  }
-
-  if (playingChannelUpdated && playingName) {
-    const updated = state.channelByName.get(playingName);
-    if (updated) {
-      state.currentChannel = { ...updated, routes: updated.routes, url: updated.url };
-    }
-  }
-
   scheduleIdleRender();
+  return { ok: true, count: remoteNormalized.length, private: false };
 }
 
 export function buildRoutesFromChannel(channel) {
-  const rawRoutes = Array.isArray(channel.urls) && channel.urls.length > 0
-    ? channel.urls
-    : channel.url
-      ? [{ url: channel.url, delay_ms: channel.delay_ms }]
-      : [];
-  return rawRoutes
-    .map((route, index) => {
-      if (!route || typeof route === 'object' && !route.url) return null;
-      const url = typeof route === 'string' ? route : String(route.url || '').trim();
-      if (!url) return null;
-      const delayMs = toFiniteNumber(typeof route === 'object' ? route.delay_ms : null)
-        ?? toFiniteNumber(channel.delay_ms)
-        ?? 0;
-      return { url, index, delay_ms: delayMs, failures: 0 };
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.delay_ms - b.delay_ms || a.index - b.index);
+  if (!channel || typeof channel !== 'object') return [];
+  return normalizeRoutes(channel, {}).sort((a, b) => a.delay_ms - b.delay_ms || a.index - b.index);
 }
 
 // ─── Filter reset and overrides ────────────────────────
@@ -304,6 +428,7 @@ export function updateChannelOverrides(name, override) {
   state.localOverrides = normalizeLocalOverrides(state.localOverrides);
   state.channels = normalizeChannels(state.allChannels);
   state.channelByName = new Map(state.channels.map((channel) => [channel.name, channel]));
+  state.channelByKey = new Map(state.channels.map((channel) => [channel.channelKey, channel]));
   state.recommendedChannels = computeTopRecommendations(RECOMMENDATION_LIMIT);
   state.categories = buildCategories();
   state.categoryIndex = Math.min(state.categoryIndex, state.categories.length - 1);
@@ -326,20 +451,20 @@ export function isVideoFullscreen() {
 }
 
 export function scheduleIdleRender() {
-  if (isRenderPending) return;
-  isRenderPending = true;
+  if (state.isRenderPending) return;
+  state.isRenderPending = true;
   const tryRender = () => {
     if (isUserActiveRecently() || isVideoFullscreen()) {
-      pendingRenderTimer = window.setTimeout(tryRender, 500);
+      state.pendingRenderTimer = window.setTimeout(tryRender, 500);
       return;
     }
-    isRenderPending = false;
-    pendingRenderTimer = null;
+    state.isRenderPending = false;
+    state.pendingRenderTimer = null;
     // imports full virtualGrid at runtime to avoid circular deps
     import('./virtualGrid.js').then(vg => vg.renderChannels());
   };
-  if (pendingRenderTimer) {
-    window.clearTimeout(pendingRenderTimer);
+  if (state.pendingRenderTimer) {
+    window.clearTimeout(state.pendingRenderTimer);
   }
-  pendingRenderTimer = window.setTimeout(tryRender, SILENT_MERGE_DELAY_MS);
+  state.pendingRenderTimer = window.setTimeout(tryRender, SILENT_MERGE_DELAY_MS);
 }

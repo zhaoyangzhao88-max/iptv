@@ -1,21 +1,19 @@
-"""
-v1 兼容配置垫片 (Shim)
-========================
-为从 v1 引擎抢救的 _from_v1.py 模块提供 HEADERS、路径常量及 output_path() 接口。
-路径锚定基于 v2 的 python_engine/ 目录结构。
-"""
+"""Shared configuration and canonical data paths for the engine."""
 
-import os
-import sys
+from pathlib import Path
 
-# python_engine/ 作为 BASE_DIR
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# 输出目录统一指向 python_engine/data/
-OUTPUT_DIR = os.path.join(BASE_DIR, "data")
-DATA_DIR = os.path.join(BASE_DIR, "data")
+PYTHON_ENGINE_DIR = Path(__file__).resolve().parents[1]
+ENGINE_ROOT = PYTHON_ENGINE_DIR.parent
+REPO_ROOT = ENGINE_ROOT.parent
+PLAYER_DATA_DIR = REPO_ROOT / "iptv-project" / "data"
+RUNTIME_DATA_DIR = PYTHON_ENGINE_DIR / "data"
 
-# 默认 HTTP 请求头
+# Backward-compatible names for legacy modules. Runtime state remains engine-local;
+# the published channel snapshot is always under the player data directory.
+OUTPUT_DIR = str(RUNTIME_DATA_DIR)
+DATA_DIR = str(RUNTIME_DATA_DIR)
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -28,10 +26,11 @@ HEADERS = {
 }
 
 
+def canonical_channels_path() -> str:
+    return str(PLAYER_DATA_DIR / "channels.json")
+
+
 def output_path(filename: str) -> str:
-    """
-    返回 OUTPUT_DIR 下的完整文件路径。
-    若 OUTPUT_DIR 不存在，自动创建。
-    """
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    return os.path.join(OUTPUT_DIR, filename)
+    """Return an engine-local runtime path for legacy state files."""
+    RUNTIME_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    return str(RUNTIME_DATA_DIR / filename)

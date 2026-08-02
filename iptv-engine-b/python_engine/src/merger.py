@@ -5,6 +5,18 @@ from python_engine.src.models import Channel, RawStream
 from python_engine.src.normalizer import clean_channel_name, get_channel_group, get_channel_metadata
 from python_engine.src.reputation import get_score as _get_reputation_score
 
+
+def _stream_risk_flags(url: str) -> List[str]:
+    lowered = url.lower()
+    if lowered.startswith("http://") and "127.0.0.1" not in lowered and "localhost" not in lowered:
+        return ["http-cleartext"]
+    return []
+
+
+def _merge_risk_flags(channel: Channel, flags: List[str]) -> None:
+    channel.risk_flags = sorted(set(channel.risk_flags).union(flags))
+
+
 def rough_aggregate_streams(streams: List[RawStream]) -> List[Channel]:
     """第一波：内存粗聚合（保留向后兼容）"""
     aggregated: Dict[str, Channel] = {}
@@ -20,12 +32,14 @@ def rough_aggregate_streams(streams: List[RawStream]) -> List[Channel]:
                 group=get_channel_group(name),
                 urls=[stream.raw_url],
                 logo=meta.get("logo") or stream.tvg_logo,
-                tvg_id=meta.get("tvg_id")
+                tvg_id=meta.get("tvg_id"),
+                risk_flags=_stream_risk_flags(stream.raw_url),
             )
         else:
             channel = aggregated[key]
             if stream.raw_url not in channel.urls:
                 channel.urls.append(stream.raw_url)
+            _merge_risk_flags(channel, _stream_risk_flags(stream.raw_url))
     return list(aggregated.values())
 
 def refined_aggregate_streams(streams: List[RawStream]) -> List[Channel]:
@@ -45,12 +59,14 @@ def refined_aggregate_streams(streams: List[RawStream]) -> List[Channel]:
                 group=group,
                 urls=[stream.raw_url],
                 logo=logo,
-                tvg_id=tvg_id if (tvg_id := meta.get("tvg_id")) else None
+                tvg_id=tvg_id if (tvg_id := meta.get("tvg_id")) else None,
+                risk_flags=_stream_risk_flags(stream.raw_url),
             )
         else:
             channel = aggregated[key]
             if stream.raw_url not in channel.urls:
                 channel.urls.append(stream.raw_url)
+            _merge_risk_flags(channel, _stream_risk_flags(stream.raw_url))
     return list(aggregated.values())
 
 def merge_priority_channels(
@@ -122,13 +138,16 @@ def sort_channel_urls_with_priority(
         standard_urls = []
         for url in channel.urls:
             url_lower = url.lower()
-            if "/udp/" in url_lower or "/rtp/" in url_lower or "localhost:" in url_lower or "127.0.0.1:" in url_lower:
+            if "/udp/" in url_lower or "/rtp/" in url_lower:
                 priority_urls.append(url)
             else:
                 standard_urls.append(url)
         priority_urls.sort(key=lambda u: delay_scores.get(u, 9999))
         standard_urls.sort(key=lambda u: delay_scores.get(u, 9999))
-        channel.is_multicast = bool(priority_urls)
+        channel.is_multicast = any(
+            "/udp/" in url.lower() or "/rtp/" in url.lower()
+            for url in channel.urls
+        )
         sorted_urls = (priority_urls + standard_urls)[:4]
         channel.urls = sorted_urls
         if sorted_urls:

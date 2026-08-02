@@ -10,9 +10,15 @@ import { state, els, getStorage, saveRouteOrderToStorage,
   getOrCreateWatchStat, addWatchCount, addWatchDuration,
   saveLastWatched, saveWatchStats, writeJsonToStorage,
   readJsonFromStorage, loadLocalOverrides, normalizeLocalOverrides,
-  isUserActiveRecently, lastUserActivityTime, recordUserActivity
+  isUserActiveRecently
 } from './state.js';
 import { renderChannels, applyFocus, renderChannelGrid } from './virtualGrid.js';
+
+function isCurrentChannel(channel) {
+  if (!channel || !state.currentChannel) return false;
+  if (channel.channelKey && state.currentChannelKey) return channel.channelKey === state.currentChannelKey;
+  return channel.name === state.currentChannelName;
+}
 
 // ─── Playback — instant start, no black screen ─────────
 
@@ -29,9 +35,11 @@ export function playChannel(channel, options = {}) {
   destroyHlsInstance();
 
   const channelName = resolvedChannel.name;
-  const watchStat = getOrCreateWatchStat(channelName);
+  const channelKey = resolvedChannel.channelKey || channelName;
+  const watchStat = getOrCreateWatchStat(resolvedChannel);
   state.currentChannel = resolvedChannel;
   state.currentChannelName = channelName;
+  state.currentChannelKey = channelKey;
   state.currentWatchDurationSec = watchStat.duration_sec;
   state.hlsRouteIndex = 0;
   state.hlsFatalRetryCount = 0;
@@ -118,19 +126,21 @@ function setupHlsInstance(channel, route, routeIndex, enableConnectionTimeout) {
 
   state.hls.on(window.Hls.Events.MANIFEST_LOADING, () => {
     clearHlsConnectionTimeout();
-    if (state.currentChannelName === channel.name) {
+    if (isCurrentChannel(channel) && state.hls) {
       autoplayVideo(true);
     }
   });
 
   state.hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
     clearHlsConnectionTimeout();
-    if (state.currentChannelName === channel.name) {
+    if (isCurrentChannel(channel) && state.hls) {
       autoplayVideo(true);
     }
   });
 
+  const hlsInstance = state.hls;
   state.hls.on(window.Hls.Events.ERROR, (event, data) => {
+    if (state.hls !== hlsInstance || !isCurrentChannel(channel)) return;
     console.warn('[OWL IPTV] Hls.js 播放错误：', data && data.type, data && data.details);
 
     if (isMediaDecodeError(data)) {
@@ -155,7 +165,7 @@ function bindVideoStalledAndError(channel, failedRoute, failedRouteIndex) {
 
   const onWaiting = () => {
     if (state.isSwitching) return;
-    if (state.currentChannelName !== channel.name) return;
+    if (!isCurrentChannel(channel)) return;
     console.warn('[OWL IPTV] 播放卡顿（waiting 事件），启动停滞监测器...');
     startVideoStalledMonitor(channel, failedRoute, failedRouteIndex);
   };
@@ -174,7 +184,7 @@ export function startVideoStalledMonitor(channel, failedRoute, failedRouteIndex)
   const pollInterval = FREEZE_DETECT_MS + Math.random() * FREEZE_POLL_JITTER_MS;
 
   state._freezeMonitorInterval = window.setInterval(() => {
-    if (state.currentChannelName !== channel.name) return;
+    if (!isCurrentChannel(channel)) return;
     if (state.isSwitching) return;
 
     const video = els.video;
@@ -297,7 +307,7 @@ function startHlsConnectionTimeout(channel, route, routeIndex) {
   state.hlsConnectionTimedOut = false;
 
   state.hlsConnectionTimer = window.setTimeout(() => {
-    if (state.currentChannelName !== channel.name) return;
+    if (!isCurrentChannel(channel)) return;
     if (state.hls && state.hls.loaded) return;
 
     state.hlsConnectionTimedOut = true;

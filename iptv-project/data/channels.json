@@ -7,6 +7,8 @@
     ],
     "delay_ms": 15,
     "logo": "https://iptv-org.github.io/logos/CCTV1.png",
-    "tvg_id": "CCTV1.cn"
+    "tvg_id": "CCTV1.cn",
+    "is_multicast": false,
+    "risk_flags": []
   }
 ]

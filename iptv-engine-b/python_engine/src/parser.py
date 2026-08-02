@@ -14,7 +14,7 @@ def is_m3u_playlist(url: str) -> bool:
     # 必须是以 .m3u 结尾（不含 8），容错剔除查询参数
     return path.endswith(".m3u")
 
-def parse_m3u_content(m3u_text: str) -> List[RawStream]:
+def parse_m3u_content(m3u_text: str, source_id: Optional[str] = None) -> List[RawStream]:
     """
     像素级解析 M3U 纯文本。
     提取出每一个频道对应的播放链接(raw_url)、原始名称(raw_name)、原始分类(raw_group)以及原始台标(tvg_logo)。
@@ -58,7 +58,8 @@ def parse_m3u_content(m3u_text: str) -> List[RawStream]:
                         raw_url=line,
                         raw_name=current_extinf["raw_name"],
                         raw_group=current_extinf["raw_group"],
-                        tvg_logo=current_extinf["tvg_logo"]
+                        tvg_logo=current_extinf["tvg_logo"],
+                        source_id=source_id
                     )
                     raw_streams.append(stream)
                 except Exception:
@@ -96,7 +97,7 @@ def expand_m3u_streams(streams: List[RawStream], max_depth: int = 3, visited: se
                 if response.status_code == 200:
                     sub_text = response.text
                     # 解析子 M3U 文件
-                    sub_streams = parse_m3u_content(sub_text)
+                    sub_streams = parse_m3u_content(sub_text, source_id=stream.source_id)
                     # 递归下钻展开
                     expanded_sub = expand_m3u_streams(sub_streams, max_depth - 1, visited)
                     flat_streams.extend(expanded_sub)

@@ -1,30 +1,48 @@
 /**
- * tests/server.test.js
- * Tests for the modular HTTP server factory (server.js).
- * Uses Node.js built-in test runner (node:test).
+ * Focused contract tests for the modular HTTP server factory.
+ * All resolver behavior is injected; no platform upstream is contacted.
  */
 const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
+const { createServer, MAX_ROOM_ID_LENGTH } = require("../src/server.js");
 
-// We'll create server.js next. For now, this test defines the contract.
-// Import will work once server.js is created.
-let createServer;
-
-// Helper: make an HTTP GET request and return { statusCode, headers, body }
-function httpGet(url) {
+function request(baseURL, path, method = "GET") {
     return new Promise((resolve, reject) => {
-        http.get(url, (res) => {
+        const requestUrl = new URL(path, baseURL);
+        const req = http.request(requestUrl, { method }, (res) => {
             let body = "";
+            res.setEncoding("utf8");
             res.on("data", (chunk) => (body += chunk));
-            res.on("end", () => {
-                resolve({
-                    statusCode: res.statusCode,
-                    headers: res.headers,
-                    body,
-                });
-            });
-        }).on("error", reject);
+            res.on("end", () => resolve({
+                statusCode: res.statusCode,
+                headers: res.headers,
+                body,
+            }));
+        });
+        req.on("error", reject);
+        req.end();
+    });
+}
+
+function listen(server) {
+    return new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+            server.removeListener("error", reject);
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+}
+
+function close(server) {
+    return new Promise((resolve, reject) => {
+        if (!server || !server.listening) {
+            resolve();
+            return;
+        }
+        server.close((error) => (error ? reject(error) : resolve()));
     });
 }
 
@@ -33,158 +51,175 @@ describe("server.js", () => {
     let baseURL;
 
     before(async () => {
-        // Dynamically require server.js once it exists
-        createServer = require("../src/server.js").createServer;
+        server = createServer({
+            // Explicit 0 is reserved for the test harness and must not become
+            // production port 3000 in the factory configuration.
+            port: 0,
+            allowedRedirectHosts: ["streams.example"],
+            resolvers: {
+                bilibili: async (roomId) => ({
+                    roomId,
+                    platform: "bilibili",
+                    realUrl: "https://streams.example/live/playlist.m3u8",
+                }),
+            },
+        });
+        baseURL = await listen(server);
     });
 
-    describe("GET /health", () => {
-        before((_, done) => {
-            server = createServer({ port: 0 }); // port 0 = random available port
-            server.listen(0, () => {
-                const addr = server.address();
-                baseURL = `http://localhost:${addr.port}`;
-                done();
+    after(() => close(server));
+
+    it("keeps the factory testable with an ephemeral port and preserves health JSON", async () => {
+        const response = await request(baseURL, "/health");
+        assert.equal(response.statusCode, 200);
+        assert.match(response.headers["content-type"], /application\/json/);
+        assert.equal(response.headers["access-control-allow-origin"], "*");
+
+        const body = JSON.parse(response.body);
+        assert.deepEqual(body, {
+            status: "ok",
+            port: server.address().port,
+        });
+        assert.notEqual(body.port, 0);
+    });
+
+    it("redirects a successful resolver result to its validated HTTPS URL", async () => {
+        const response = await request(baseURL, "/api/bilibili/12345");
+        assert.equal(response.statusCode, 302);
+        assert.equal(response.headers.location, "https://streams.example/live/playlist.m3u8");
+        assert.equal(response.body, "");
+    });
+
+    it("returns retryable JSON for null and fallback resolver failures", async () => {
+        const failureServer = createServer({
+            port: 0,
+            m3u8BaseUrl: "https://test-stream.com",
+            resolvers: {
+                bilibili: () => null,
+                douyin: () => ({ roomId: "room", platform: "douyin", fallback: true }),
+            },
+        });
+        const failureBaseURL = await listen(failureServer);
+
+        try {
+            const nullResponse = await request(failureBaseURL, "/api/bilibili/room");
+            assert.equal(nullResponse.statusCode, 503);
+            assert.equal(nullResponse.headers.location, undefined);
+            assert.deepEqual(JSON.parse(nullResponse.body), {
+                error: "Stream unavailable",
+                platform: "bilibili",
+                roomId: "room",
+                retryable: true,
             });
-        });
+            assert.doesNotMatch(nullResponse.body, /test-stream\.com/);
 
-        after(() => {
-            if (server) server.close();
-        });
-
-        it("should return 200 with { status: ok }", async () => {
-            const res = await httpGet(`${baseURL}/health`);
-            assert.equal(res.statusCode, 200);
-            const body = JSON.parse(res.body);
-            assert.equal(body.status, "ok");
-        });
-
-        it("should return JSON content type", async () => {
-            const res = await httpGet(`${baseURL}/health`);
-            assert.ok(res.headers["content-type"].includes("application/json"));
-        });
-
-        it("should include port in response", async () => {
-            const res = await httpGet(`${baseURL}/health`);
-            const body = JSON.parse(res.body);
-            assert.ok(typeof body.port === "number");
-            assert.ok(body.port > 0);
-        });
+            const fallbackResponse = await request(failureBaseURL, "/api/douyin/room");
+            assert.equal(fallbackResponse.statusCode, 503);
+            assert.equal(JSON.parse(fallbackResponse.body).retryable, true);
+            assert.equal(fallbackResponse.headers.location, undefined);
+        } finally {
+            await close(failureServer);
+        }
     });
 
-    describe("404 for unknown routes", () => {
-        before((_, done) => {
-            server = createServer({ port: 0 });
-            server.listen(0, () => {
-                const addr = server.address();
-                baseURL = `http://localhost:${addr.port}`;
-                done();
-            });
-        });
-
-        after(() => {
-            if (server) server.close();
-        });
-
-        it("should return 404 for unknown path", async () => {
-            const res = await httpGet(`${baseURL}/nonexistent`);
-            assert.equal(res.statusCode, 404);
-            const body = JSON.parse(res.body);
-            assert.equal(body.error, "Not Found");
-        });
-    });
-
-    describe("CORS headers", () => {
-        before((_, done) => {
-            server = createServer({ port: 0 });
-            server.listen(0, () => {
-                const addr = server.address();
-                baseURL = `http://localhost:${addr.port}`;
-                done();
-            });
-        });
-
-        after(() => {
-            if (server) server.close();
-        });
-
-        it("should include CORS header on health response", async () => {
-            const res = await httpGet(`${baseURL}/health`);
-            assert.equal(res.headers["access-control-allow-origin"], "*");
-        });
-
-        it("should include CORS header on 404 response", async () => {
-            const res = await httpGet(`${baseURL}/nonexistent`);
-            assert.equal(res.headers["access-control-allow-origin"], "*");
-        });
-    });
-
-    describe("Resolver delegation (with stub resolvers)", () => {
-        before((_, done) => {
-            // Create server with stub resolvers for testing route delegation
-            server = createServer({
-                port: 0,
-                resolvers: {
-                    bilibili: (roomId) => {
-                        if (!roomId || roomId === "invalid") return null;
-                        return { roomId, platform: "bilibili" };
-                    },
+    it("returns retryable JSON when a resolver throws or is not configured", async () => {
+        const failureServer = createServer({
+            port: 0,
+            resolvers: {
+                bilibili: async () => {
+                    throw new Error("upstream unavailable");
                 },
-            });
-            server.listen(0, () => {
-                const addr = server.address();
-                baseURL = `http://localhost:${addr.port}`;
-                done();
-            });
+            },
         });
+        const failureBaseURL = await listen(failureServer);
 
-        after(() => {
-            if (server) server.close();
-        });
+        try {
+            const thrownResponse = await request(failureBaseURL, "/api/bilibili/room");
+            assert.equal(thrownResponse.statusCode, 503);
+            assert.equal(JSON.parse(thrownResponse.body).retryable, true);
 
-        it("should return 302 for valid resolver result", async () => {
-            const res = await httpGet(`${baseURL}/api/bilibili/12345`);
-            assert.equal(res.statusCode, 302);
-            assert.ok(res.headers.location);
-            assert.ok(res.headers.location.includes("/bilibili/12345"));
-        });
-
-        it("should return 400 for invalid room ID (resolver returns null)", async () => {
-            const res = await httpGet(`${baseURL}/api/bilibili/invalid`);
-            assert.equal(res.statusCode, 400);
-        });
+            const missingResponse = await request(failureBaseURL, "/api/douyin/room");
+            assert.equal(missingResponse.statusCode, 503);
+            assert.equal(JSON.parse(missingResponse.body).error, "Resolver unavailable");
+        } finally {
+            await close(failureServer);
+        }
     });
 
-    describe("Async resolver support", () => {
-        before((_, done) => {
-            server = createServer({
-                port: 0,
-                resolvers: {
-                    bilibili: async (roomId) => {
-                        if (!roomId || roomId === "invalid") return null;
-                        return { roomId, platform: "bilibili", realUrl: "https://real.stream/playlist.m3u8" };
-                    },
+    it("rejects invalid, encoded, and overlong route IDs before resolver invocation", async () => {
+        let calls = 0;
+        const validationServer = createServer({
+            port: 0,
+            resolvers: {
+                bilibili: (roomId) => {
+                    calls += 1;
+                    return { roomId, platform: "bilibili", realUrl: "https://streams.example/live.m3u8" };
                 },
-            });
-            server.listen(0, () => {
-                const addr = server.address();
-                baseURL = `http://localhost:${addr.port}`;
-                done();
-            });
+            },
+            allowedRedirectHosts: ["streams.example"],
         });
+        const validationBaseURL = await listen(validationServer);
 
-        after(() => {
-            if (server) server.close();
-        });
+        try {
+            for (const path of [
+                "/api/bilibili/",
+                "/api/bilibili/a%2Fb",
+                "/api/bilibili/%3Cscript%3E",
+                `/api/bilibili/${"a".repeat(MAX_ROOM_ID_LENGTH + 1)}`,
+            ]) {
+                const response = await request(validationBaseURL, path);
+                assert.equal(response.statusCode, 400, path);
+                assert.equal(JSON.parse(response.body).error, "Invalid room ID");
+            }
+            assert.equal(calls, 0);
+        } finally {
+            await close(validationServer);
+        }
+    });
 
-        it("should handle async resolver returning realUrl", async () => {
-            const res = await httpGet(`${baseURL}/api/bilibili/12345`);
-            assert.equal(res.statusCode, 302);
-            assert.equal(res.headers.location, "https://real.stream/playlist.m3u8");
-        });
+    it("allows GET and HEAD but rejects other methods on bound routes", async () => {
+        const headResponse = await request(baseURL, "/api/bilibili/12345", "HEAD");
+        assert.equal(headResponse.statusCode, 302);
+        assert.equal(headResponse.headers.location, "https://streams.example/live/playlist.m3u8");
+        assert.equal(headResponse.body, "");
 
-        it("should return 400 for invalid from async resolver", async () => {
-            const res = await httpGet(`${baseURL}/api/bilibili/invalid`);
-            assert.equal(res.statusCode, 400);
+        const postResponse = await request(baseURL, "/api/bilibili/12345", "POST");
+        assert.equal(postResponse.statusCode, 405);
+        assert.equal(postResponse.headers.allow, "GET, HEAD");
+        assert.equal(JSON.parse(postResponse.body).error, "Method Not Allowed");
+    });
+
+    it("rejects non-HTTPS or non-allowlisted real URLs without redirecting", async () => {
+        const urlServer = createServer({
+            port: 0,
+            allowedRedirectHosts: ["streams.example"],
+            resolvers: {
+                bilibili: (roomId) => ({
+                    roomId,
+                    platform: "bilibili",
+                    realUrl: roomId === "http"
+                        ? "http://streams.example/live.m3u8"
+                        : "https://not-allowed.example/live.m3u8",
+                }),
+            },
         });
+        const urlBaseURL = await listen(urlServer);
+
+        try {
+            for (const roomId of ["http", "evil"]) {
+                const response = await request(urlBaseURL, `/api/bilibili/${roomId}`);
+                assert.equal(response.statusCode, 503);
+                assert.equal(response.headers.location, undefined);
+                assert.equal(JSON.parse(response.body).retryable, true);
+            }
+        } finally {
+            await close(urlServer);
+        }
+    });
+
+    it("returns 404 for unknown paths", async () => {
+        const response = await request(baseURL, "/not-found");
+        assert.equal(response.statusCode, 404);
+        assert.equal(JSON.parse(response.body).error, "Not Found");
     });
 });

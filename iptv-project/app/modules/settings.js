@@ -72,14 +72,22 @@ export function handleRouteStrategyChange() {
   import('./inputHandler.js').then(ih => ih.showTvToast('路由策略已更新'));
 }
 
-export function applyM3UUrl() {
+export async function applyM3UUrl() {
   const inputM3U = document.getElementById('input-m3u-url');
-  if (!inputM3U) return;
+  if (!inputM3U) return { ok: false, count: 0 };
   const url = inputM3U.value.trim();
-  if (!url) return;
+  if (!/^https?:\/\//i.test(url)) {
+    import('./inputHandler.js').then(ih => ih.showTvToast('请输入有效的 http(s) M3U 地址'));
+    return { ok: false, count: 0 };
+  }
   saveSettings({ m3uSubUrl: url });
-  import('./dataLoader.js').then(dl => dl.fetchAndMergeRemoteChannels(url));
-  import('./inputHandler.js').then(ih => ih.showTvToast('自定义 M3U 订阅源已应用'));
+  const [dataLoader, inputHandler] = await Promise.all([
+    import('./dataLoader.js'),
+    import('./inputHandler.js')
+  ]);
+  const result = await dataLoader.fetchAndMergeRemoteChannels(url);
+  inputHandler.showTvToast(result.ok ? `私有源已加载：${result.count} 个频道` : '私有源加载失败');
+  return result;
 }
 
 export function clearAllCache() {

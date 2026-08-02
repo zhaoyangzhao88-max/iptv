@@ -7,11 +7,16 @@ import {
 // ─── 全局状态单例 ─────────────────────────────────────
 export const state = {
   allChannels: [],
+  publicChannels: [],
+  privateChannels: [],
+  privateSources: [],
+  sourceStatus: {},
   channels: [],
   categories: [],
   currentChannels: [],
   recommendedChannels: [],
   channelByName: new Map(),
+  channelByKey: new Map(),
   localOverrides: {},
   watchStats: {},
   activeColumn: 'category',
@@ -20,6 +25,7 @@ export const state = {
   channelIndex: 0,
   currentChannel: null,
   currentChannelName: null,
+  currentChannelKey: null,
   currentWatchDurationSec: 0,
   hls: null,
   hlsRouteIndex: 0,
@@ -47,7 +53,10 @@ export const state = {
   _vgStartIndex: 0,
   _vgEndIndex: 0,
   _scrollRAF: null,
-  _preloadTimer: null
+  _preloadTimer: null,
+  lastUserActivityTime: Date.now(),
+  pendingRenderTimer: null,
+  isRenderPending: false
 };
 
 // ─── DOM 元素缓存 ─────────────────────────────────────
@@ -202,9 +211,10 @@ export function normalizeRouteOrder(value) {
 
 export function saveRouteOrderToStorage(channel) {
   if (!channel || !channel.name || !channel.routes) return;
-  const existing = state.localOverrides.channels[channel.name] || {};
+  const key = getChannelKey(channel);
+  const existing = getChannelOverride(channel);
   const newRouteOrder = channel.routes.map((r) => r.url);
-  state.localOverrides.channels[channel.name] = {
+  state.localOverrides.channels[key] = {
     ...existing,
     delay_ms: null,
     routeOrder: newRouteOrder,
@@ -220,18 +230,16 @@ export function saveRouteOrderToStorage(channel) {
 export function loadWatchStats() {
   const parsed = readJsonFromStorage(WATCH_STATS_KEY);
   const stats = {};
+  const add = (key, item) => {
+    if (!key || !item || typeof item !== 'object') return;
+    stats[String(key)] = normalizeWatchStat(item);
+  };
   if (Array.isArray(parsed)) {
-    parsed.forEach((item) => {
-      if (!item || !item.name) return;
-      stats[item.name] = normalizeWatchStat(item);
-    });
+    parsed.forEach((item) => add(item && (item.channelKey || item.name), item));
     return stats;
   }
   if (parsed && typeof parsed === 'object') {
-    Object.entries(parsed).forEach(([name, item]) => {
-      if (!item || typeof item !== 'object') return;
-      stats[name] = normalizeWatchStat(item);
-    });
+    Object.entries(parsed).forEach(([key, item]) => add(key, item));
   }
   return stats;
 }
@@ -241,6 +249,17 @@ export function normalizeWatchStat(item) {
     count: Math.max(0, Math.floor(Number(item.count) || 0)),
     duration_sec: Math.max(0, Number(item.duration_sec) || 0)
   };
+}
+
+export function getChannelKey(channelOrKey, fallbackName = '') {
+  if (channelOrKey && typeof channelOrKey === 'object') return channelOrKey.channelKey || channelOrKey.name || fallbackName;
+  return channelOrKey || fallbackName;
+}
+
+export function getChannelOverride(channelOrKey, fallbackName = '') {
+  const key = getChannelKey(channelOrKey, fallbackName);
+  const name = channelOrKey && typeof channelOrKey === 'object' ? channelOrKey.name : fallbackName;
+  return state.localOverrides.channels[key] || (name ? state.localOverrides.channels[name] : {}) || {};
 }
 
 export function saveWatchStats() {
@@ -255,31 +274,34 @@ export function saveWatchStats() {
 }
 
 export function pruneWatchStats(stats) {
-  return Object.entries(stats).reduce((nextStats, [name, stat]) => {
-    if (!state.channelByName.has(name)) return nextStats;
-    nextStats[name] = normalizeWatchStat(stat);
+  return Object.entries(stats).reduce((nextStats, [key, stat]) => {
+    if (state.channelByKey.has(key)) {
+      nextStats[key] = normalizeWatchStat(stat);
+      return nextStats;
+    }
+    const matches = [...state.channelByName.values()].filter((channel) => channel.name === key);
+    if (matches.length === 1) nextStats[matches[0].channelKey || key] = normalizeWatchStat(stat);
     return nextStats;
   }, {});
 }
 
-export function getOrCreateWatchStat(name) {
-  if (!state.watchStats[name]) {
-    state.watchStats[name] = { count: 0, duration_sec: 0 };
-  }
-  return state.watchStats[name];
+export function getOrCreateWatchStat(channelOrName) {
+  const key = getChannelKey(channelOrName);
+  if (!state.watchStats[key]) state.watchStats[key] = { count: 0, duration_sec: 0 };
+  return state.watchStats[key];
 }
 
-export function addWatchCount(name) {
-  const stat = getOrCreateWatchStat(name);
+export function addWatchCount(channelOrName) {
+  const stat = getOrCreateWatchStat(channelOrName);
   stat.count += 1;
   saveWatchStats();
 }
 
-export function addWatchDuration(name, seconds) {
-  const stat = getOrCreateWatchStat(name);
+export function addWatchDuration(channelOrName, seconds) {
+  const stat = getOrCreateWatchStat(channelOrName);
   stat.duration_sec += seconds;
   state.currentWatchDurationSec = stat.duration_sec;
-  saveLastWatched(name);
+  saveLastWatched(getChannelKey(channelOrName));
   saveWatchStats();
   // updateWatchDuration is called by the caller
 }
@@ -295,14 +317,26 @@ export function saveLastWatched(channelName) {
 
 // ─── User activity tracking ───────────────────────────
 
-export let lastUserActivityTime = Date.now();
-export let pendingRenderTimer = null;
-export let isRenderPending = false;
-
 export function recordUserActivity() {
-  lastUserActivityTime = Date.now();
+  state.lastUserActivityTime = Date.now();
+}
+
+export function setLastUserActivityTime(timestamp) {
+  state.lastUserActivityTime = timestamp;
+}
+
+export function getLastUserActivityTime() {
+  return state.lastUserActivityTime;
 }
 
 export function isUserActiveRecently() {
-  return (Date.now() - lastUserActivityTime) < SILENT_MERGE_DELAY_MS;
+  return (Date.now() - state.lastUserActivityTime) < SILENT_MERGE_DELAY_MS;
+}
+
+export function clearPendingRenderTimer() {
+  if (state.pendingRenderTimer) {
+    window.clearTimeout(state.pendingRenderTimer);
+    state.pendingRenderTimer = null;
+  }
+  state.isRenderPending = false;
 }

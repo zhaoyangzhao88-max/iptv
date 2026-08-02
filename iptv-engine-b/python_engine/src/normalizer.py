@@ -4,7 +4,10 @@ import re
 import requests
 import difflib
 from typing import Dict, Optional, List
+from urllib.parse import urlsplit
 from python_engine.src.models import RawStream
+
+LOOPBACK_STREAM_BASE_URL = "http://127.0.0.1:3000/api"
 
 # 定义本地轻量化缓存目录与文件路径
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
@@ -135,34 +138,32 @@ def get_channel_group(channel_name: str) -> str:
     return "其他频道"
 
 def rewrite_special_stream_url(stream: RawStream) -> RawStream:
-    """
-    【核心新增】：智能重写特殊流媒体 URL（B站、抖音、快手）
-    将全网盲扫出来的难以直接播放、带有时效 Token 的原始链接，自动伪装、重写为本地 Node.js 重定向微服务。
-    - B站原始: https://live.bilibili.com/26066074 -> http://localhost:3000/api/bilibili/26066074
-    - 抖音原始: https://live.douyin.com/775841227732 -> http://localhost:3000/api/douyin/775841227732
-    - 快手原始: https://live.kuaishou.com/u/kpl_live -> http://localhost:3000/api/kuaishou/kpl_live
+    """Replace supported platform room URLs with stable loopback routes.
+
+    Only bounded room IDs from the known public platform hosts are rewritten.
+    The short-lived upstream URL is resolved later by the Node service and is
+    never persisted in the channel snapshot.
     """
     url = stream.raw_url
-
-    # 1. 正则锁定 B 站直播间
-    bili_match = re.search(r"live\.bilibili\.com/(\d+)", url)
-    if bili_match:
-        room_id = bili_match.group(1)
-        stream.raw_url = f"http://localhost:3000/api/bilibili/{room_id}"
+    room_pattern = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return stream
+    if parsed.scheme.lower() not in {"http", "https"} or parsed.username or parsed.password:
         return stream
 
-    # 2. 正则锁定 抖音直播间
-    douyin_match = re.search(r"live\.douyin\.com/(\d+)", url)
-    if douyin_match:
-        room_id = douyin_match.group(1)
-        stream.raw_url = f"http://localhost:3000/api/douyin/{room_id}"
-        return stream
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    path_parts = [part for part in parsed.path.split("/") if part]
+    platform = None
+    room_id = None
+    if hostname == "live.bilibili.com" and len(path_parts) == 1:
+        platform, room_id = "bilibili", path_parts[0]
+    elif hostname == "live.douyin.com" and len(path_parts) == 1:
+        platform, room_id = "douyin", path_parts[0]
+    elif hostname == "live.kuaishou.com" and len(path_parts) == 2 and path_parts[0].lower() == "u":
+        platform, room_id = "kuaishou", path_parts[1]
 
-    # 3. 正则锁定 快手直播间 (/u/ 用户名或数字房间号)
-    kuaishou_match = re.search(r"live\.kuaishou\.com/u/([^/?#\s]+)", url)
-    if kuaishou_match:
-        room_id = kuaishou_match.group(1)
-        stream.raw_url = f"http://localhost:3000/api/kuaishou/{room_id}"
-        return stream
-
+    if platform and room_id and room_pattern.fullmatch(room_id):
+        stream.raw_url = f"{LOOPBACK_STREAM_BASE_URL}/{platform}/{room_id}"
     return stream

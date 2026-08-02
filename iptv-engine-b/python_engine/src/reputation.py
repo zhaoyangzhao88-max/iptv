@@ -2,6 +2,7 @@ import os
 import json
 import time
 import logging
+import tempfile
 from typing import Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
@@ -39,18 +40,14 @@ def prune_reputation_scores(scores: Dict[str, dict]) -> Dict[str, dict]:
 
 
 def get_score(scores: Dict[str, dict], url: str, default: int = DEFAULT_SCORE) -> int:
-    """
-    兼容访问器：从新版 {url: {s, t}} 格式中安全提取分数。
-    若条目缺失或格式异常，返回默认值。
-    """
+    """Safely extract a normalized score from either supported storage format."""
     entry = scores.get(url)
     if entry is None:
         return default
-    if isinstance(entry, dict):
-        return entry.get("s", default)
-    if isinstance(entry, (int, float)):
-        return int(entry)
-    return default
+    value = entry.get("s", default) if isinstance(entry, dict) else entry
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return int(value)
 
 
 def load_reputation_scores() -> Dict[str, dict]:
@@ -79,17 +76,45 @@ def load_reputation_scores() -> Dict[str, dict]:
 
 
 def save_reputation_scores(scores: Dict[str, dict]):
-    """
-    将信誉分字典物理写入本地 JSON 文件中。
-    写入前自动执行容量淘汰（上限 MAX_SCORE_ENTRIES 条），防无限增长。
-    """
+    """Atomically persist reputation scores and propagate write failures."""
     scores = prune_reputation_scores(scores)
-    os.makedirs(os.path.dirname(REPUTATION_FILE), exist_ok=True)
+    output_directory = os.path.dirname(os.path.abspath(REPUTATION_FILE))
+    os.makedirs(output_directory, exist_ok=True)
+    descriptor, temporary_path = tempfile.mkstemp(
+        dir=output_directory,
+        prefix=f".{os.path.basename(REPUTATION_FILE)}.",
+        suffix=".tmp",
+    )
     try:
-        with open(REPUTATION_FILE, "w", encoding="utf-8") as f:
-            json.dump(scores, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = None
+            json.dump(scores, stream, ensure_ascii=False, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, REPUTATION_FILE)
+        if os.name != "nt":
+            try:
+                directory_descriptor = os.open(output_directory, os.O_RDONLY)
+            except OSError:
+                directory_descriptor = None
+            if directory_descriptor is not None:
+                try:
+                    os.fsync(directory_descriptor)
+                finally:
+                    os.close(directory_descriptor)
+    except BaseException:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        try:
+            os.unlink(temporary_path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+        raise
 
 
 def init_reputation_score(url: str, scores: Dict[str, dict] = None) -> int:

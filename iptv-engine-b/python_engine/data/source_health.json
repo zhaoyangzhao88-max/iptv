@@ -1,0 +1,44 @@
+{
+  "source_1": {
+    "status": "removed",
+    "consecutive_failures": 3,
+    "isolated_failures": 2,
+    "total_streams": 0,
+    "healthy_streams": 0
+  },
+  "source_2": {
+    "status": "removed",
+    "consecutive_failures": 3,
+    "isolated_failures": 2,
+    "total_streams": 0,
+    "healthy_streams": 0
+  },
+  "source_3": {
+    "status": "removed",
+    "consecutive_failures": 3,
+    "isolated_failures": 2,
+    "total_streams": 0,
+    "healthy_streams": 0
+  },
+  "source_4": {
+    "status": "removed",
+    "consecutive_failures": 3,
+    "isolated_failures": 2,
+    "total_streams": 0,
+    "healthy_streams": 0
+  },
+  "source_5": {
+    "status": "removed",
+    "consecutive_failures": 3,
+    "isolated_failures": 2,
+    "total_streams": 0,
+    "healthy_streams": 0
+  },
+  "https://github.com/source1.m3u": {
+    "status": "healthy",
+    "consecutive_failures": 0,
+    "isolated_failures": 0,
+    "total_streams": 1,
+    "healthy_streams": 1
+  }
+}

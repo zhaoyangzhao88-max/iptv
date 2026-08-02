@@ -9,7 +9,7 @@ def test_dual_tier_latency_sorting_and_curtailing():
             group="央视频道",
             urls=[
                 "http://public-web-slow.com/live.m3u8",   # 公网慢线 (150ms)
-                "http://localhost:3000/api/bilibili/6",   # 极品本地 Node 中转 (20ms)
+                "http://127.0.0.1:3000/api/bilibili/6",   # 极品本地 Node 中转 (20ms)
                 "http://public-web-fast.com/live.m3u8",   # 公网快线 (50ms)
                 "http://11.1.1.1:8080/udp/239.1.1.1:8001",# 极品组播专网 (5ms)
                 "http://untested.com/live.m3u8"           # 未测速线 (缺省9999ms)
@@ -20,7 +20,7 @@ def test_dual_tier_latency_sorting_and_curtailing():
     # 模拟测速引擎采集回来的真实网速延迟字典
     mock_delays = {
         "http://11.1.1.1:8080/udp/239.1.1.1:8001": 5,      # 极品 1 (5ms)
-        "http://localhost:3000/api/bilibili/6": 20,       # 极品 2 (20ms)
+        "http://127.0.0.1:3000/api/bilibili/6": 20,       # 极品 2 (20ms)
         "http://public-web-fast.com/live.m3u8": 50,       # 普通 1 (50ms)
         "http://public-web-slow.com/live.m3u8": 150       # 普通 2 (150ms)
         # http://untested.com/live.m3u8 在测速字典中缺失，默认代表未通过或超时
@@ -37,7 +37,7 @@ def test_dual_tier_latency_sorting_and_curtailing():
     # 断言 2：双层分流排序严格度
     # Tier 1 (极品源) 必须无视公网速度排在最前头，且按 5ms -> 20ms 升序排！
     assert cctv.urls[0] == "http://11.1.1.1:8080/udp/239.1.1.1:8001" # 5ms
-    assert cctv.urls[1] == "http://localhost:3000/api/bilibili/6"    # 20ms
+    assert cctv.urls[1] == "http://127.0.0.1:3000/api/bilibili/6"    # 20ms
 
     # Tier 2 (普通源) 必须靠后排，且按 50ms -> 150ms 升序排！
     assert cctv.urls[2] == "http://public-web-fast.com/live.m3u8"    # 50ms

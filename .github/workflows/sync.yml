@@ -1,43 +1,15 @@
-name: IPTV-Engine-B Auto Sync Pipeline
+name: IPTV Reputation Sync (disabled)
 
+# Snapshot publication is owned exclusively by daily_wash.yml.  Keeping this
+# workflow as a manual no-op avoids two scheduled jobs racing on one baseline.
 on:
-  schedule:
-    # 定时调度：每 12 小时（半天，中午12点和半夜24点）自动唤醒云端机器人运行一次，完美不超标
-    - cron: '0 */12 * * *'
-  workflow_dispatch: # 支持你在 GitHub 页面上点 Run 按钮手动立刻运行
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  sync_and_deploy:
+  retired:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Python Environment
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: iptv-engine-b/python_engine/requirements.txt
-
-      - name: Install Dependencies
-        run: |
-          pip install -r iptv-engine-b/python_engine/requirements.txt
-
-      - name: Run IPTV Engine Core Pipeline
-        run: |
-          # 注入 PYTHONPATH，彻底清除 Python 包路径导入的玄学崩溃
-          export PYTHONPATH=$PYTHONPATH:iptv-engine-b
-          python iptv-engine-b/python_engine/src/main.py
-
-      - name: Commit and Push Database Changes
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          # 仅在我们的"功德簿"（history_scores.json）由于积分扣分发生变动时才提交，绝对避免空提交
-          git add iptv-engine-b/python_engine/data/history_scores.json
-
-          git commit -m "chore(data): auto sync reputation scores [skip ci]" || echo "No changes to commit"
-          git push
+      - run: echo "Snapshot publication is handled by daily_wash.yml"

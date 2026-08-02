@@ -43,6 +43,8 @@
             : [];
         return {
           name: ch.name,
+          sourceId: ch.sourceId,
+          channelKey: ch.channelKey,
           urls: urls.filter(Boolean),
           routeCount: ch.routeCount || urls.length || 1,
           delay_ms: ch.delay_ms

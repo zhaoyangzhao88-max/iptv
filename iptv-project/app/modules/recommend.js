@@ -7,7 +7,7 @@ export function calculateScore(stat) {
 
 export function compareScoredChannels(left, right) {
   if (right.score !== left.score) return right.score - left.score;
-  return left.name.localeCompare(right.name, 'zh-CN');
+  return (left.channelKey || left.name).localeCompare(right.channelKey || right.name, 'zh-CN');
 }
 
 export function insertScoredChannel(top, item, limit) {

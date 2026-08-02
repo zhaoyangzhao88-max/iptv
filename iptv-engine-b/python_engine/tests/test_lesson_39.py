@@ -10,12 +10,9 @@ def test_determine_output_path_env_override():
         assert path == "/tmp/test_out.json"
 
 def test_determine_output_path_ci_fallback():
-    """测试自适应计算：当本地 Windows 开发路径不存在时，优雅回退至云端 Actions 备份路径"""
+    """Without an override, local and CI runs use the shared player snapshot."""
     with patch.dict(os.environ, {}, clear=True):
-        # 模拟 E 盘路径绝对不存在，触发 fallback 降级
-        with patch("os.path.exists", return_value=False):
-            path = determine_output_path()
-            assert path == DEFAULT_CI_PATH
+        assert determine_output_path() == DEFAULT_CI_PATH
 
 def test_write_channels_json_pretty_formatting(tmp_path):
     """测试物理写盘：验证 JSON 被成功物理写入，且格式排版排版精美（带缩进）"""

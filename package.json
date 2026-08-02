@@ -6,9 +6,10 @@
   "scripts": {
     "start": "cd iptv-project && npm start",
     "dist": "cd iptv-project && npm run dist",
-    "test": "npm run test:node && npm run test:python",
+    "test": "npm run test:node && npm run test:python && npm run test:player",
     "test:python": "cd iptv-engine-b && python -m pytest",
-    "test:node": "cd iptv-engine-b/node_api && node --test tests/*.test.js"
+    "test:node": "cd iptv-engine-b/node_api && node --test tests/*.test.js",
+    "test:player": "npm --prefix iptv-project test"
   },
   "engines": {
     "node": ">=20.0.0"

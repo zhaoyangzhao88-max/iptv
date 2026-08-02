@@ -1,17 +1,17 @@
 import { electronAPI, CONFIG, LAST_WATCHED_KEY, RECOMMENDATION_LIMIT, LOCAL_OVERRIDES_KEY, WATCH_STATS_KEY } from './modules/constants.js';
-import { state, els, cacheElements, loadWatchStats, loadLocalOverrides,
+import { state, els, loadWatchStats, loadLocalOverrides,
   pruneWatchStats, writeJsonToStorage,
-  getStorage,
-  lastUserActivityTime, isRenderPending, pendingRenderTimer } from './modules/state.js';
+  getStorage, setLastUserActivityTime, getLastUserActivityTime,
+  clearPendingRenderTimer } from './modules/state.js';
 import { playChannel, getBootChannel,
   scheduleLazyAutoplay, preloadAdjacentChannels,
   handleCheckerWorkerMessage } from './modules/player.js';
 import { loadChannels, normalizeChannels, buildCategories,
-  getInitialCategoryIndex, prepareRecommendations,
+  getInitialCategoryIndex,
   fetchAndMergeRemoteChannels, resetLocalFilters,
   updateChannelOverrides, markChannelFailed } from './modules/dataLoader.js';
-import { computeTopRecommendations, getTopRecommendations } from './modules/recommend.js';
-import { renderCategories, renderChannels, applyFocus } from './modules/virtualGrid.js';
+import { computeTopRecommendations, prepareRecommendations, getTopRecommendations } from './modules/recommend.js';
+import { cacheElements, renderCategories, renderChannels, applyFocus } from './modules/virtualGrid.js';
 import { bindEvents, showTvToast } from './modules/inputHandler.js';
 import { runCategoryDiagnostic } from './modules/diagnostic.js';
 
@@ -19,11 +19,18 @@ import { runCategoryDiagnostic } from './modules/diagnostic.js';
 // OWL IPTV — 入口文件
 // ══════════════════════════════════════════════════════
 
-function exposeGlobals() {
-  window.owlIptvData = state.channels;
+export function exposeGlobals() {
+  Object.defineProperty(window, 'owlIptvData', {
+    configurable: true,
+    enumerable: true,
+    get: () => state.channels
+  });
   window.owlIptv = {
     getChannels: () => state.channels.slice(),
     getAllChannels: () => state.allChannels.slice(),
+    getSources: () => ({ public: state.sourceStatus.public || { sourceId: 'public', enabled: true }, private: state.privateSources.map((source) => ({ ...source, channels: source.channels.slice() })) }),
+    refreshSource: (...args) => import('./modules/dataLoader.js').then(dl => dl.fetchAndMergeRemoteChannels(...args)),
+    setSourceEnabled: (...args) => import('./modules/dataLoader.js').then(dl => dl.setSourceEnabled(...args)),
     getWatchStats: () => ({ ...state.watchStats }),
     getTopRecommendations,
     getLocalOverrides: () => ({ ...state.localOverrides }),
@@ -42,10 +49,10 @@ function exposeGlobals() {
     fetchAndMergeRemoteChannels,
     showTvToast,
     _getCONFIG: () => CONFIG,
-    _getLastUserActivityTime: () => lastUserActivityTime,
-    _setLastUserActivityTime: (ts) => { lastUserActivityTime = ts; },
-    _isRenderPending: () => isRenderPending,
-    _clearPendingRenderTimer: () => { if (pendingRenderTimer) { clearTimeout(pendingRenderTimer); pendingRenderTimer = null; } isRenderPending = false; },
+    _getLastUserActivityTime: getLastUserActivityTime,
+    _setLastUserActivityTime: setLastUserActivityTime,
+    _isRenderPending: () => state.isRenderPending,
+    _clearPendingRenderTimer: clearPendingRenderTimer,
     _getLastWatched: () => {
       const s = getStorage();
       return s ? s.getItem(LAST_WATCHED_KEY) : null;
@@ -65,6 +72,8 @@ async function init() {
 
   // 1. Load channels.json first
   state.allChannels = await loadChannels();
+  state.publicChannels = state.allChannels.slice();
+  state.privateChannels = [];
   // 2. Load localStorage overrides
   state.localOverrides = loadLocalOverrides();
   // 3. Normalize with channels.json priority
