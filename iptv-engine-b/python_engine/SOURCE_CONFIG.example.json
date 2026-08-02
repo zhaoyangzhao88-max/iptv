@@ -1,0 +1,10 @@
+{
+  "sources": [
+    {
+      "name": "reviewed-source",
+      "url": "https://example.invalid/authorized.m3u",
+      "enabled": false,
+      "timeout": 8
+    }
+  ]
+}

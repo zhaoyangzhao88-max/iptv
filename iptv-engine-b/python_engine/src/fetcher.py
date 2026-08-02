@@ -2,15 +2,10 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict
 from python_engine.src.request_client import smart_request_get
+from python_engine.src.source_config import DEFAULT_SOURCE_CONFIG, SourceConfig, load_source_config
 
-# 默认预设的 5 个顶级高质量 M3U 播放源 (全部为 GitHub 链接，自动继承 Lesson 5 的代理容错和 IPv6 闪避器)
-DEFAULT_SOURCES = [
-    "https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/ipv6.m3u",  # fanmingming 大神源
-    "https://raw.githubusercontent.com/YueChan/Live/main/APTV.m3u",            # YueChan APTV 经典聚合
-    "https://raw.githubusercontent.com/YanG-1989/m3u/main/Gather.m3u",          # YanG 综合收集源
-    "https://raw.githubusercontent.com/MellowCo/iptv/main/iptv.m3u",            # MellowCo 精选源
-    "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/cn.m3u"     # iptv-org 官方中国源
-]
+# Legacy string export retained for existing callers and tests.
+DEFAULT_SOURCES = [config.url for config in DEFAULT_SOURCE_CONFIG]
 
 def fetch_single_source(url: str, timeout: int = 8) -> str:
     """
@@ -28,21 +23,26 @@ def fetch_single_source(url: str, timeout: int = 8) -> str:
 
 def fetch_all_sources(urls: List[str] = None, max_workers: int = 5) -> Dict[str, str]:
     """
-    多线程高并发下载所有的 M3U 数据源。
+    多线程高并发下载显式配置的 M3U 数据源。
+    ``urls`` 保持旧字符串接口；未传入时使用受审计的配置清单。
     返回字典结构: { "数据源网址": "下载成功的 M3U 纯文本内容" }
     """
-    if urls is None:
-        urls = DEFAULT_SOURCES
+    configs = DEFAULT_SOURCE_CONFIG if urls is None else load_source_config(
+        SourceConfig(url=url) if isinstance(url, str) else url for url in urls
+    )
 
     results: Dict[str, str] = {}
 
-    # 采用线程池进行高并发下载，max_workers 默认为 5，契合 5 个默认源
+    # 仅提交配置中明确启用的源，禁止隐式发现或扩展 URL。
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # 将并发下载任务提交到线程池中
-        future_to_url = {executor.submit(fetch_single_source, url): url for url in urls}
+        future_to_config = {
+            executor.submit(fetch_single_source, config.url, config.timeout): config
+            for config in configs
+        }
 
-        for future in as_completed(future_to_url):
-            url = future_to_url[future]
+        for future in as_completed(future_to_config):
+            config = future_to_config[future]
+            url = config.url
             try:
                 content = future.result()
                 if content:
