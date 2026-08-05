@@ -1,6 +1,12 @@
 import requests
 import socket
 from typing import Optional
+from urllib.parse import urljoin
+
+from python_engine.src.url_policy import is_safe_fetch_url, validate_redirect_url
+
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_REDIRECTS = 5
 
 # 稳定、高速的 GitHub 代理镜像池 (直连失败后自动下沉使用)
 GH_PROXIES = [
@@ -33,22 +39,65 @@ def clean_github_url(url: str, proxy: Optional[str] = None) -> str:
             return f"{base_proxy}/{url}"
     return url
 
+def _bounded_get(url: str, *, timeout: int, headers: dict) -> requests.Response:
+    current = url
+    for _ in range(MAX_REDIRECTS + 1):
+        if not is_safe_fetch_url(current):
+            raise ValueError("unsafe HTTP(S) request URL")
+        response = requests.get(
+            current,
+            timeout=timeout,
+            headers=headers,
+            allow_redirects=False,
+            stream=True,
+        )
+        location = response.headers.get("Location")
+        is_redirect = isinstance(response.status_code, int) and 300 <= response.status_code < 400
+        if is_redirect:
+            response.close()
+            if not location:
+                raise ConnectionError("redirect response missing Location")
+            current = validate_redirect_url(urljoin(current, location))
+            continue
+        content = bytearray()
+        try:
+            chunks = response.iter_content(chunk_size=64 * 1024)
+            for chunk in chunks:
+                if isinstance(chunk, str):
+                    chunk = chunk.encode("utf-8")
+                if not isinstance(chunk, (bytes, bytearray)):
+                    raise TypeError
+                if len(content) + len(chunk) > MAX_RESPONSE_BYTES:
+                    response.close()
+                    raise ValueError("response exceeds maximum size")
+                content.extend(chunk)
+        except (TypeError, AttributeError):
+            raw_content = getattr(response, "content", b"")
+            if not isinstance(raw_content, (bytes, bytearray)):
+                raw_content = str(getattr(response, "text", "")).encode("utf-8")
+            if len(content) + len(raw_content) > MAX_RESPONSE_BYTES:
+                response.close()
+                raise ValueError("response exceeds maximum size")
+            content.extend(raw_content)
+        if len(content) > MAX_RESPONSE_BYTES:
+            response.close()
+            raise ValueError("response exceeds maximum size")
+        response._content = bytes(content)
+        response.close()
+        return response
+    raise ConnectionError("too many redirects")
+
 def smart_request_get(url: str, timeout: int = 5, headers: Optional[dict] = None) -> requests.Response:
     """
     智能网络请求客户端：
     1. 自适应 IPv6 阻断：若本机无 IPv6 环境，遇 IPv6 地址则闪电报错，绝不卡死。
     2. GitHub 加速重试：GitHub 链接直连失败后，自动下沉使用镜像重试。
+    3. 所有请求均验证公网目标、逐跳验证重定向并限制响应大小。
     """
-    # 简易检测是否为 IPv6 地址 (包含方括号，或超过2个冒号且无域名后缀)
-    is_v6_url = False
-    if "[" in url and "]" in url:
-        is_v6_url = True
-    elif "://" in url:
-        host = url.split("://")[1].split("/")[0].split(":")[0]
-        if host.count(":") >= 2:
-            is_v6_url = True
-
-    # 触发阻断机制，极速跳过
+    is_v6_url = "[" in url and "]" in url
+    if "[" not in url and "://" in url:
+        host = url.split("://", 1)[1].split("/", 1)[0].split(":")[0]
+        is_v6_url = host.count(":") >= 2
     if is_v6_url and not is_ipv6_supported():
         raise ConnectionError("当前物理环境不支持 IPv6，已智能闪避该 IPv6 链接。")
 
@@ -58,22 +107,19 @@ def smart_request_get(url: str, timeout: int = 5, headers: Optional[dict] = None
     if headers:
         default_headers.update(headers)
 
-    # 1. 尝试直连
     try:
-        response = requests.get(url, timeout=timeout, headers=default_headers)
+        response = _bounded_get(url, timeout=timeout, headers=default_headers)
         if response.status_code == 200:
             return response
-    except Exception as e:
-        # 非 GitHub 链接，直连失败直接报错
-        if "github" not in url:
-            raise e
+    except Exception as error:
+        if "github" not in url.lower():
+            raise error
 
-    # 2. GitHub 链接专属容错重试池
-    if "github" in url:
+    if "github" in url.lower():
         for proxy in GH_PROXIES:
             proxied_url = clean_github_url(url, proxy)
             try:
-                response = requests.get(proxied_url, timeout=timeout, headers=default_headers)
+                response = _bounded_get(proxied_url, timeout=timeout, headers=default_headers)
                 if response.status_code == 200:
                     return response
             except Exception:

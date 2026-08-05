@@ -18,9 +18,9 @@ const FETCH_TIMEOUT_MS = 3000;
  * @param {string} roomId — Verified room ID
  * @returns {Promise<string|null>} — Real stream URL or null on failure
  */
-async function fetchRealStreamUrl(roomId) {
+async function fetchRealStreamUrl(roomId, { fetchImpl = fetch, timeoutMs = FETCH_TIMEOUT_MS } = {}) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
         const params = new URLSearchParams({
@@ -30,7 +30,7 @@ async function fetchRealStreamUrl(roomId) {
             https_url_req: "1",
         });
 
-        const resp = await fetch(`${API_URL}?${params}`, {
+        const resp = await fetchImpl(`${API_URL}?${params}`, {
             signal: controller.signal,
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -77,7 +77,7 @@ async function fetchRealStreamUrl(roomId) {
  * @param {string} roomId — Raw room ID from URL path
  * @returns {Promise<{roomId: string, platform: string, realUrl?: string, fallback: boolean} | null>}
  */
-async function resolve(roomId) {
+async function resolve(roomId, options = {}) {
     // Reject non-string input
     if (!roomId || typeof roomId !== "string") return null;
 
@@ -91,7 +91,7 @@ async function resolve(roomId) {
 
     // Attempt to fetch real stream URL; fall back to identity on any failure
     try {
-        const realUrl = await fetchRealStreamUrl(trimmed);
+        const realUrl = await fetchRealStreamUrl(trimmed, options);
         if (realUrl) {
             return { roomId: trimmed, platform: "bilibili", realUrl, fallback: false };
         }

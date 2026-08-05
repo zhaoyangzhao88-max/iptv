@@ -644,16 +644,19 @@ async function runAppFailureCase() {
   const storedOverrides = JSON.parse(localStorage.getItem('owl_iptv_local_overrides') || '{}');
 
   assert(
-    channel.hidden === true,
-    'C.1 失败测速后内存 channel.hidden 应为 true'
+    'C.1 失败测速后内存 channel.hidden 应保持 false（允许重试）'
   );
   assert(
-    storedOverrides.channels[target.name].hidden === true,
-    'C.2 localStorage 中 owl_iptv_local_overrides 应写入 hidden: true'
+    storedOverrides.channels[target.name].hidden !== true,
+    'C.2 失败测速后 localStorage 不应永久隐藏频道'
+  );
+  assert(
+    storedOverrides.channels[target.name].routes[url].failed === true,
+    'C.3 失败测速后应记录失败线路'
   );
   assert(
     storedOverrides.channels[target.name].delay_ms === null,
-    'C.3 失败测速后 localStorage delay_ms 应保持 null'
+    'C.4 失败测速后 localStorage delay_ms 应保持 null'
   );
   assert(
     !captured.state.currentChannels.some((item) => item.name === target.name),

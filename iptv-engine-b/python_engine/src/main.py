@@ -27,6 +27,7 @@ from python_engine.src.writer import (
 )
 from python_engine.src.normalizer import rewrite_special_stream_url
 from python_engine.src.quality_gate import evaluate_quality_gate
+from python_engine.src.url_policy import is_special_loopback_url
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,13 @@ async def main() -> List[dict]:
         result.get('url') for result in probe_results
         if result.get('url') and result.get('success') is True
     }
+    # Node resolver routes are stable publication references, not externally
+    # probeable media URLs. Preserve only the strict supported route shape;
+    # malformed/local URLs must still be removed by the normal probe filter.
+    publishable_loopback_urls = {
+        url for url in all_urls if is_special_loopback_url(url)
+    }
+    successful_urls.update(publishable_loopback_urls)
 
     # 8. 清淤：剔除历史信誉 <= 0 的死链，并斩首"空壳台" (Lesson 33)
     logger.info("[Step 8] 结合历史积分进行失效线路强力清淤...")

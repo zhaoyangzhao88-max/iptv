@@ -30,7 +30,6 @@ const ROOM_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 // Deployments and tests can provide a narrower list through allowedRedirectHosts.
 const DEFAULT_ALLOWED_REDIRECT_HOSTS = [
     "live.bilibili.com",
-    "*.bilibili.com",
     "*.bilivideo.com",
     "live.douyin.com",
     "*.douyin.com",
@@ -121,8 +120,10 @@ function isAllowedHost(hostname, allowedHosts) {
         const normalized = normalizeAllowedHost(entry);
         if (!normalized) return false;
         if (normalized.wildcard) {
-            return normalizedHostname === normalized.value
-                || normalizedHostname.endsWith(`.${normalized.value}`);
+            // A wildcard matches subdomains only; the apex must be listed
+            // explicitly when it is an approved redirect target.
+            return normalizedHostname !== normalized.value
+                && normalizedHostname.endsWith(`.${normalized.value}`);
         }
         return normalizedHostname === normalized.value;
     });

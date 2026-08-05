@@ -48,6 +48,35 @@ jobs:
           write_channels_m3u(channels, os.path.join('iptv-project', 'data', 'channels.m3u'))
           PY
 
+      - name: Scan public outputs for sensitive URLs
+        env:
+          PUBLIC_OUTPUTS: iptv-project/data/channels.json iptv-project/data/channels.manifest.json iptv-project/data/channels.m3u
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+          from urllib.parse import parse_qsl, urlsplit
+          sensitive = re.compile(r'(account|api.?key|auth|cookie|credential|password|passwd|secret|session|sig|signature|token|streamkey|streamid|migutoken|txsecret|wstime|wssecret)', re.I)
+          bad = False
+          for name in os.environ['PUBLIC_OUTPUTS'].split():
+              path = Path(name)
+              if not path.is_file():
+                  print('public output missing')
+                  bad = True
+                  continue
+              text = path.read_text(encoding='utf-8')
+              for match in re.finditer(r'https?://[^\s|)]+', text):
+                  value = match.group(0).rstrip('.,')
+                  parsed = urlsplit(value)
+                  if parsed.username or parsed.password or any(sensitive.search(key) for key, _ in parse_qsl(parsed.query, keep_blank_values=True)):
+                      print('public output contains a sensitive URL parameter')
+                      bad = True
+                      break
+          raise SystemExit(1 if bad else 0)
+          PY
+
       - name: Upload canonical artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -61,6 +90,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add iptv-project/data/channels.json iptv-project/data/channels.manifest.json iptv-project/data/channels.m3u iptv-engine-b/python_engine/data/history_scores.json
-          git commit -m "chore(data): daily wash + speed test pipeline [skip ci]" || echo "No changes to commit"
-          git push
+          git add iptv-project/data/channels.json iptv-project/data/channels.manifest.json iptv-project/data/channels.m3u
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore(data): daily wash + speed test pipeline [skip ci]"
+            git push origin HEAD:data
+          fi

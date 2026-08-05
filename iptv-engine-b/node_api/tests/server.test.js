@@ -5,7 +5,7 @@
 const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
-const { createServer, MAX_ROOM_ID_LENGTH } = require("../src/server.js");
+const { createServer, MAX_ROOM_ID_LENGTH, validateRedirectUrl } = require("../src/server.js");
 
 function request(baseURL, path, method = "GET") {
     return new Promise((resolve, reject) => {
@@ -217,6 +217,65 @@ describe("server.js", () => {
         }
     });
 
+    it("does not treat the Bilibili API host as a redirect destination by default", async () => {
+        const apiHostServer = createServer({
+            port: 0,
+            resolvers: {
+                bilibili: (roomId) => ({
+                    roomId,
+                    platform: "bilibili",
+                    realUrl: "https://api.live.bilibili.com/xlive/web-room/v1/playUrl/playUrl",
+                }),
+            },
+        });
+        const apiHostBaseURL = await listen(apiHostServer);
+
+        try {
+            const response = await request(apiHostBaseURL, "/api/bilibili/room");
+            assert.equal(response.statusCode, 503);
+            assert.equal(response.headers.location, undefined);
+            assert.deepEqual(JSON.parse(response.body), {
+                error: "Invalid stream URL",
+                platform: "bilibili",
+                roomId: "room",
+                retryable: true,
+            });
+        } finally {
+            await close(apiHostServer);
+        }
+    });
+
+    it("supports per-platform exact redirect host configuration", async () => {
+        const configuredServer = createServer({
+            port: 0,
+            allowedRedirectHosts: {
+                bilibili: ["cdn.bilibili.example"],
+                douyin: ["cdn.douyin.example"],
+            },
+            resolvers: {
+                bilibili: (roomId) => ({ roomId, realUrl: "https://cdn.bilibili.example/live.m3u8" }),
+                douyin: (roomId) => ({ roomId, realUrl: "https://cdn.bilibili.example/live.m3u8" }),
+            },
+        });
+        const configuredBaseURL = await listen(configuredServer);
+        try {
+            const allowed = await request(configuredBaseURL, "/api/bilibili/room");
+            assert.equal(allowed.statusCode, 302);
+            const rejected = await request(configuredBaseURL, "/api/douyin/room");
+            assert.equal(rejected.statusCode, 503);
+        } finally {
+            await close(configuredServer);
+        }
+    });
+
+    it("does not let wildcard hosts include the apex domain", () => {
+        assert.equal(
+            validateRedirectUrl("https://cdn.example/live.m3u8", ["*.example"]),
+            "https://cdn.example/live.m3u8",
+        );
+        assert.equal(validateRedirectUrl("https://example/live.m3u8", ["*.example"]), null);
+        assert.equal(validateRedirectUrl("https://example.evil/live.m3u8", ["*.example"]), null);
+    });
     it("returns 404 for unknown paths", async () => {
         const response = await request(baseURL, "/not-found");
         assert.equal(response.statusCode, 404);

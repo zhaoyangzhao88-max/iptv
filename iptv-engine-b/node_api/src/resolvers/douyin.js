@@ -15,12 +15,12 @@ const API_TIMEOUT_MS = 3000;
  * @param {string} roomId — Verified room ID
  * @returns {Promise<string|null>} — Real stream URL or null on failure
  */
-async function fetchRealStreamUrl(roomId) {
+async function fetchRealStreamUrl(roomId, { fetchImpl = fetch, timeoutMs = API_TIMEOUT_MS } = {}) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-        const resp = await fetch(`${WEB_URL}/${roomId}`, {
+        const resp = await fetchImpl(`${WEB_URL}/${roomId}`, {
             signal: controller.signal,
             headers: {
                 "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
@@ -71,7 +71,7 @@ async function fetchRealStreamUrl(roomId) {
  * @param {string} roomId — Raw room ID from URL path
  * @returns {Promise<{roomId: string, platform: string, realUrl?: string, fallback: boolean} | null>}
  */
-async function resolve(roomId) {
+async function resolve(roomId, options = {}) {
     if (!roomId || typeof roomId !== "string") return null;
 
     const trimmed = roomId.trim();
@@ -79,7 +79,7 @@ async function resolve(roomId) {
     if (!ROOM_ID_PATTERN.test(trimmed)) return null;
 
     try {
-        const realUrl = await fetchRealStreamUrl(trimmed);
+        const realUrl = await fetchRealStreamUrl(trimmed, options);
         if (realUrl) {
             return { roomId: trimmed, platform: "douyin", realUrl, fallback: false };
         }

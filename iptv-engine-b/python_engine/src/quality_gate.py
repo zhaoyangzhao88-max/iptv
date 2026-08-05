@@ -17,6 +17,9 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.parse import parse_qsl, urlsplit
 
+from python_engine.src.url_policy import is_special_loopback_url
+
+
 SCHEMA_VERSION = 1
 MAX_RELATIVE_DECLINE = 0.20
 MIN_CHANNEL_COUNT = 1
@@ -182,7 +185,9 @@ def _candidate_metrics(
     else:
         probes = list(probe_results)
 
-    successful_urls: set[str] = set()
+    successful_urls: set[str] = {
+        route for route in candidate_urls if is_special_loopback_url(route)
+    }
     successful_probe_count = 0
     valid_probe_count = 0
     for probe in probes:
@@ -383,7 +388,8 @@ def evaluate_quality_gate(
     _sensitive_keys(candidate_data, sensitive_keys)
     _sensitive_keys(probe_results, sensitive_keys)
     for key in sorted(sensitive_keys):
-        reasons.append(f"sensitive key '{key}' is not allowed")
+        reasons.append("candidate contains a sensitive URL parameter")
+        break
 
     baseline, baseline_error = _baseline_from_input(stable_manifest)
     if baseline_error is not None:

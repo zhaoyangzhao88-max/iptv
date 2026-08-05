@@ -63,7 +63,7 @@ export function exposeGlobals() {
   };
 }
 
-async function init() {
+export async function init() {
   cacheElements();
   bindEvents();
   // Initialize settings module (Phase 5)
@@ -78,6 +78,8 @@ async function init() {
   state.localOverrides = loadLocalOverrides();
   // 3. Normalize with channels.json priority
   state.channels = normalizeChannels(state.allChannels);
+  state.channelByName = new Map(state.channels.map((channel) => [channel.name, channel]));
+  state.channelByKey = new Map(state.channels.map((channel) => [channel.channelKey, channel]));
   prepareRecommendations();
 
   // ─── 绍兴本地频道专项特调注入 ─────────────────────

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable, List
 
 from python_engine.src.models import Channel
+from python_engine.src.url_policy import contains_sensitive_url
 
 
 MIN_CHANNEL_COUNT = 1
@@ -20,6 +21,11 @@ def _validate_publication_data(data: List[dict]) -> None:
         errors = channel.publication_errors()
         if errors:
             raise ValueError("; ".join(errors))
+        for route in item.get("urls", []):
+            if isinstance(route, dict):
+                route = route.get("url")
+            if contains_sensitive_url(route):
+                raise ValueError("channel publication contains a sensitive URL parameter")
 
 
 def _validate_decline(data: List[dict], output_path: str) -> None:

@@ -51,6 +51,18 @@ cd iptv-engine-b/node_api
 node src/redirect_api.js
 ```
 
+生产部署时建议通过 `allowedRedirectHosts` 使用按平台配置的最小主机集合：
+
+```js
+allowedRedirectHosts: {
+  bilibili: ["cdn.example-bilibili.net"],
+  douyin: ["stream.example-douyin.com"],
+  kuaishou: ["edge.example-kuaishou.com"],
+}
+```
+
+这些值应来自部署环境实际观察到的 HTTPS 播放地址；不要把 `api.live.bilibili.com`、`live.douyin.com` 等页面/API 抓取地址自动当成重定向目标，也不要把 `streams.example`、`test-stream.com` 或本地 fixture 主机放入生产配置。未提供配置时，服务仍使用内置平台兼容主机族，并继续强制 HTTPS、禁止凭据和执行主机名边界校验。
+
 ## 🧪 测试
 
 ```bash

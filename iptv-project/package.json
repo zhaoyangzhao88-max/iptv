@@ -2,6 +2,7 @@
   "name": "owl-iptv-player",
   "version": "1.0.0",
   "description": "智能电视盒风格精品 IPTV 播放客户端",
+  "author": "Zhao Yang",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -16,7 +17,9 @@
     "appId": "com.owl.iptv.player",
     "productName": "OwlIPTV",
     "win": {
-      "target": ["portable"]
+      "target": [
+        "portable"
+      ]
     },
     "directories": {
       "output": "dist"
@@ -34,8 +37,14 @@
       {
         "from": "../iptv-engine-b/node_api",
         "to": "node_api",
-        "filter": ["**/*", "!tests/**"]
+        "filter": [
+          "**/*",
+          "!tests/**"
+        ]
       }
     ]
+  },
+  "dependencies": {
+    "hls.js": "1.6.16"
   }
 }

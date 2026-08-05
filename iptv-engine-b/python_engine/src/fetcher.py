@@ -4,6 +4,8 @@ from typing import List, Dict
 from python_engine.src.request_client import smart_request_get
 from python_engine.src.source_config import DEFAULT_SOURCE_CONFIG, SourceConfig, load_source_config
 
+MAX_SOURCE_BYTES = 4 * 1024 * 1024
+
 # Legacy string export retained for existing callers and tests.
 DEFAULT_SOURCES = [config.url for config in DEFAULT_SOURCE_CONFIG]
 
@@ -15,7 +17,11 @@ def fetch_single_source(url: str, timeout: int = 8) -> str:
     try:
         response = smart_request_get(url, timeout=timeout)
         if response.status_code == 200:
-            return response.text
+            content = response.text
+            if len(content.encode("utf-8", errors="replace")) <= MAX_SOURCE_BYTES:
+                return content
+            logging.warning("M3U 源响应超过大小上限，已跳过: %s", url)
+            return ""
         return ""
     except Exception as e:
         logging.warning(f"下载 M3U 源失败: {url}，原因: {e}")

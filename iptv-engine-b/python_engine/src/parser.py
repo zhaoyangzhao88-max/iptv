@@ -5,6 +5,12 @@ from urllib.parse import urlparse
 from python_engine.src.models import RawStream
 from python_engine.src.request_client import smart_request_get
 
+MAX_M3U_BYTES = 4 * 1024 * 1024
+MAX_M3U_LINES = 100_000
+MAX_M3U_ENTRIES = 10_000
+MAX_EXPANDED_URLS = 20_000
+MAX_NESTED_PLAYLISTS = 1_000
+
 def is_m3u_playlist(url: str) -> bool:
     """
     智能判定一个 URL 是否指向另一个 M3U 播放列表文件（而非直链流地址如 .m3u8）
@@ -14,13 +20,24 @@ def is_m3u_playlist(url: str) -> bool:
     # 必须是以 .m3u 结尾（不含 8），容错剔除查询参数
     return path.endswith(".m3u")
 
-def parse_m3u_content(m3u_text: str, source_id: Optional[str] = None) -> List[RawStream]:
+def parse_m3u_content(
+    m3u_text: str,
+    source_id: Optional[str] = None,
+    *,
+    max_bytes: int = MAX_M3U_BYTES,
+    max_lines: int = MAX_M3U_LINES,
+    max_entries: int = MAX_M3U_ENTRIES,
+) -> List[RawStream]:
     """
     像素级解析 M3U 纯文本。
     提取出每一个频道对应的播放链接(raw_url)、原始名称(raw_name)、原始分类(raw_group)以及原始台标(tvg_logo)。
     """
+    if not isinstance(m3u_text, str) or len(m3u_text.encode("utf-8", errors="replace")) > max_bytes:
+        return []
     raw_streams: List[RawStream] = []
     lines = m3u_text.splitlines()
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
     current_extinf = None
 
     tvg_id_regex = re.compile(r'tvg-id=["\']?([^"\']+)["\']?', re.IGNORECASE)
@@ -61,6 +78,8 @@ def parse_m3u_content(m3u_text: str, source_id: Optional[str] = None) -> List[Ra
                         tvg_logo=current_extinf["tvg_logo"],
                         source_id=source_id
                     )
+                    if len(raw_streams) >= max_entries:
+                        break
                     raw_streams.append(stream)
                 except Exception:
                     pass
@@ -68,7 +87,15 @@ def parse_m3u_content(m3u_text: str, source_id: Optional[str] = None) -> List[Ra
 
     return raw_streams
 
-def expand_m3u_streams(streams: List[RawStream], max_depth: int = 3, visited: set = None) -> List[RawStream]:
+def expand_m3u_streams(
+    streams: List[RawStream],
+    max_depth: int = 3,
+    visited: set = None,
+    *,
+    max_expanded_urls: int = MAX_EXPANDED_URLS,
+    max_nested_playlists: int = MAX_NESTED_PLAYLISTS,
+    _nested_state: Optional[dict] = None,
+) -> List[RawStream]:
     """
     递归展开器：扫描当前的 RawStream 列表。
     若发现某条 stream 的 URL 实际上是一个子 M3U 播放列表，则自动请求下载并解析，将其扁平化展开到主列表中。
@@ -76,20 +103,25 @@ def expand_m3u_streams(streams: List[RawStream], max_depth: int = 3, visited: se
     """
     if visited is None:
         visited = set()
+    if _nested_state is None:
+        _nested_state = {"count": 0}
 
     if max_depth <= 0:
-        return streams
+        return streams[:max_expanded_urls]
 
     flat_streams: List[RawStream] = []
 
     for stream in streams:
+        if len(flat_streams) >= max_expanded_urls:
+            break
         url = stream.raw_url
 
         # 判断是否为嵌套子播放列表
         if is_m3u_playlist(url):
-            if url in visited:
-                continue  # 闪避循环引用死锁
+            if url in visited or _nested_state["count"] >= max_nested_playlists:
+                continue  # 闪避循环引用和资源耗尽
             visited.add(url)
+            _nested_state["count"] += 1
 
             try:
                 # 递归并发拉取子 M3U 数据（继承 Lesson 5 智能网络客户端）
@@ -99,7 +131,14 @@ def expand_m3u_streams(streams: List[RawStream], max_depth: int = 3, visited: se
                     # 解析子 M3U 文件
                     sub_streams = parse_m3u_content(sub_text, source_id=stream.source_id)
                     # 递归下钻展开
-                    expanded_sub = expand_m3u_streams(sub_streams, max_depth - 1, visited)
+                    expanded_sub = expand_m3u_streams(
+                        sub_streams,
+                        max_depth - 1,
+                        visited,
+                        max_expanded_urls=max_expanded_urls - len(flat_streams),
+                        max_nested_playlists=max_nested_playlists,
+                        _nested_state=_nested_state,
+                    )
                     flat_streams.extend(expanded_sub)
             except Exception:
                 # 即使子列表挂掉，也优雅忽略，确保主线进度继续

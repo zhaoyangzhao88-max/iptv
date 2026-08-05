@@ -6,12 +6,29 @@ from unittest.mock import patch
 import pytest
 
 from python_engine.src.quality_gate import evaluate_quality_gate
+from python_engine.src.url_policy import is_special_loopback_url
 from python_engine.src.writer import (
     DEFAULT_OUTPUT_PATH,
     determine_output_path,
     write_channels_json,
     write_channels_m3u,
 )
+
+
+def test_special_loopback_routes_are_structural_publication_routes():
+    valid = "http://127.0.0.1:3000/api/bilibili/room_1"
+    assert is_special_loopback_url(valid)
+    assert not is_special_loopback_url("http://127.0.0.1:3000/api/unknown/room_1")
+    assert not is_special_loopback_url("http://127.0.0.1:3000/api/bilibili/room_1?token=secret")
+
+    result = evaluate_quality_gate(
+        [{"name": "Bilibili", "urls": [valid]}],
+        [{"url": valid, "success": False}],
+        generation_time="2026-08-03T00:00:00Z",
+    )
+    assert result.accepted is True
+    assert result.manifest["valid_route_count"] == 1
+    assert result.manifest["success_rate"] == 0.0
 
 
 def _channels(count: int, routes_per_channel: int = 1) -> list[dict]:
@@ -160,7 +177,7 @@ def test_quality_gate_rejects_missing_corrupt_baselines_and_sensitive_query_keys
     missing = evaluate_quality_gate(candidate, probes, tmp_path / "missing-manifest.json")
     assert missing.accepted is False
     assert missing.reasons == [
-        "sensitive key 'token' is not allowed",
+        "candidate contains a sensitive URL parameter",
         "stable manifest is missing",
     ]
 
@@ -169,12 +186,13 @@ def test_quality_gate_rejects_missing_corrupt_baselines_and_sensitive_query_keys
     corrupt = evaluate_quality_gate(candidate, probes, corrupt_path)
     assert corrupt.accepted is False
     assert corrupt.reasons == [
-        "sensitive key 'token' is not allowed",
+        "candidate contains a sensitive URL parameter",
         "stable manifest is corrupt",
     ]
 
     privacy = evaluate_quality_gate(candidate, probes)
     assert privacy.accepted is False
-    assert any("token" in reason for reason in privacy.reasons)
+    assert privacy.reasons.count("candidate contains a sensitive URL parameter") == 1
+    assert all("token" not in reason.lower() for reason in privacy.reasons)
     assert all("secret-value" not in reason for reason in privacy.reasons)
     assert all(candidate[0]["urls"][0] not in reason for reason in privacy.reasons)

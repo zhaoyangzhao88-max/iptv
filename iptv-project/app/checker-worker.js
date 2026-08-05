@@ -123,25 +123,33 @@
     // Advance index for next cycle (round-robin)
     currentIndex = (currentIndex + 1) % channelQueue.length;
 
-    // Test the first (current best) URL of this channel
-    const url = channel.urls[0];
-
-    if (!url) {
+    if (channel.urls.length === 0) {
       // No URL to test — skip and schedule next
       timerId = setTimeout(runNextTest, TEST_INTERVAL_MS);
       return;
     }
 
-    // Perform the lightweight speed test
-    const result = await testUrl(url);
+    // Probe routes in order. A slow or failed primary route must not hide a
+    // channel when a later route is usable.
+    const routeResults = [];
+    let selected = null;
+    for (const url of channel.urls) {
+      const result = await testUrl(url);
+      routeResults.push({ url, ...result });
+      if (result.success) {
+        selected = { url, ...result };
+        break;
+      }
+    }
 
-    // Send result back to main thread
     self.postMessage({
       type: 'test_result',
       channelName: channel.name,
       urls: channel.urls,
-      delay_ms: result.delay_ms,
-      success: result.success
+      routeResults,
+      selectedUrl: selected ? selected.url : null,
+      delay_ms: selected ? selected.delay_ms : -1,
+      success: Boolean(selected)
     });
 
     // Schedule next test
@@ -152,6 +160,13 @@
 
   async function testUrl(url) {
     abortController = new AbortController();
+    const timeoutId = setTimeout(() => {
+      try {
+        abortController?.abort();
+      } catch (e) {
+        // ignore — abort may already have fired
+      }
+    }, FETCH_TIMEOUT_MS);
     const startTime = Date.now();
 
     try {
@@ -164,6 +179,7 @@
       });
 
       const endTime = Date.now();
+      clearTimeout(timeoutId);
       abortController = null;
 
       return {
@@ -171,6 +187,7 @@
         success: true
       };
     } catch (error) {
+      clearTimeout(timeoutId);
       abortController = null;
 
       // AbortError = timeout; anything else = network failure

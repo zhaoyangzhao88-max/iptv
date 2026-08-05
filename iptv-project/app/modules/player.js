@@ -354,25 +354,47 @@ export function handleCheckerWorkerMessage(event) {
   if (!channel) return;
 
   if (data.success && typeof data.delay_ms === 'number' && data.delay_ms >= 0) {
-    if (channel.routes && channel.routes.length > 0) {
-      channel.routes[0].delay_ms = data.delay_ms;
-    }
+    const selectedUrl = typeof data.selectedUrl === 'string' ? data.selectedUrl : null;
+    const selectedRoute = channel.routes?.find((route) => route.url === selectedUrl) || channel.routes?.[0];
+    if (selectedRoute) selectedRoute.delay_ms = data.delay_ms;
+    channel.routes?.forEach((route) => {
+      const failed = data.routeResults?.find((item) => item.url === route.url && !item.success);
+      if (failed) route.failures = (route.failures || 0) + 1;
+    });
+    channel.url = selectedRoute?.url || channel.url;
     channel.delay_ms = data.delay_ms;
     channel.hidden = false;
 
     const existing = state.localOverrides.channels[channelName] || {};
+    const existingRoutes = (existing.routes && typeof existing.routes === 'object') ? existing.routes : {};
+    const routeUpdates = {};
+    (data.routeResults || []).forEach((item) => {
+      if (item.success) {
+        routeUpdates[item.url] = { failed: false, failures: 0, delay_ms: item.delay_ms };
+      } else {
+        const previous = existingRoutes[item.url] || {};
+        routeUpdates[item.url] = {
+          failed: true,
+          failures: (Number.isFinite(previous.failures) ? previous.failures : 0) + 1
+        };
+      }
+    });
     state.localOverrides.channels[channelName] = {
-      ...existing, delay_ms: data.delay_ms, failed: false, failures: 0, hidden: false
+      ...existing, delay_ms: data.delay_ms, failed: false, failures: 0, hidden: false,
+      routeOrder: selectedUrl ? [selectedUrl] : existing.routeOrder,
+      routes: { ...existingRoutes, ...routeUpdates }
     };
   } else if (!data.success) {
-    channel.hidden = true;
     const existing = state.localOverrides.channels[channelName] || {};
     const existingRoutes = (existing.routes && typeof existing.routes === 'object') ? existing.routes : {};
-    const failedUrl = Array.isArray(data.urls) && data.urls.length > 0 ? data.urls[0] : null;
-
+    const routeUpdates = {};
+    (data.routeResults || data.urls?.map((url) => ({ url, success: false })) || []).forEach((item) => {
+      if (item.url) routeUpdates[item.url] = { failed: true, failures: 1 };
+    });
+    channel.hidden = false;
     state.localOverrides.channels[channelName] = {
-      ...existing, delay_ms: null, hidden: true,
-      routes: { ...existingRoutes, ...(failedUrl ? { [failedUrl]: { failed: true, failures: 1 } } : {}) }
+      ...existing, delay_ms: null, hidden: false,
+      routes: { ...existingRoutes, ...routeUpdates }
     };
   }
 

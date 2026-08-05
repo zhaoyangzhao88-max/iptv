@@ -1,6 +1,6 @@
 import { DATA_FALLBACK_URL, CONFIG, ROUTE_FAILURE_LIMIT,
   LOCAL_OVERRIDES_KEY, RECOMMENDATION_LIMIT, SILENT_MERGE_DELAY_MS,
-  WATCH_STATS_KEY } from './constants.js';
+  WATCH_STATS_KEY, SETTINGS_KEY } from './constants.js';
 import { electronAPI } from './constants.js';
 import { state, loadLocalOverrides, normalizeLocalOverrides,
   readJsonFromStorage, writeJsonToStorage,
@@ -15,15 +15,14 @@ export async function loadChannels() {
   return loadChannelsFromFetch();
 }
 
-function loadChannelsFromNode() {
-  if (!electronAPI) return Promise.resolve(null);
+async function loadChannelsFromNode() {
+  if (!electronAPI) return null;
   try {
-    const dataPath = electronAPI.pathJoin(electronAPI.getAppPath(), 'app', '..', 'data', 'channels.json');
-    const raw = electronAPI.readFile(dataPath);
-    return Promise.resolve(normalizeChannelSource(JSON.parse(raw)));
+    const raw = await electronAPI.readPublicSnapshot();
+    return normalizeChannelSource(JSON.parse(raw));
   } catch (error) {
     console.warn('[OWL IPTV] Node 读取 data/channels.json 失败，将尝试 fetch 降级。', error);
-    return Promise.resolve(null);
+    return null;
   }
 }
 
@@ -114,17 +113,16 @@ export function normalizeChannelSource(data, sourceId = 'public') {
         source_tier: toFiniteNumber(channel.source_tier),
         last_verified: channel.last_verified ? String(channel.last_verified).trim() : undefined
       };
-      const providedFields = new Set(
-        ['group', 'delay_ms', 'logo', 'tvg_id', 'epg_id', 'is_multicast', 'risk_flags', 'source_tier', 'last_verified']
-          .filter((field) => hasOwn(channel, field))
-      );
+      const providedFieldNames = Array.isArray(channel.__providedFields)
+        ? channel.__providedFields.filter((field) => typeof field === 'string')
+        : [
+          'group', 'delay_ms', 'logo', 'tvg_id', 'epg_id', 'is_multicast',
+          'risk_flags', 'source_tier', 'last_verified'
+        ].filter((field) => hasOwn(channel, field));
+      const providedFields = new Set(providedFieldNames);
       if (routeSource.key) providedFields.add('urls');
       if (typeof channel.url === 'string' && channel.url.trim()) providedFields.add('url');
-      Object.defineProperty(normalized, '__providedFields', {
-        value: providedFields,
-        enumerable: false,
-        configurable: true
-      });
+      normalized.__providedFields = [...providedFields];
       return normalized;
     })
     .filter((channel) => {
@@ -180,7 +178,8 @@ function normalizeRoutes(channel, override = {}) {
     .map((route, index) => normalizeRoute(route, index, channel, override))
     .filter(Boolean);
   if (routes.length === 0) return [];
-  return sortRoutes(routes, override.routeOrder);
+  const settings = readJsonFromStorage(SETTINGS_KEY) || {};
+  return sortRoutes(routes, override.routeOrder, settings.routeStrategy);
 }
 
 function normalizeRoute(route, index, channel, override = {}) {
@@ -188,24 +187,36 @@ function normalizeRoute(route, index, channel, override = {}) {
   const url = String(rawUrl || '').trim();
   if (!url) return null;
   const routeOverride = override.routes ? override.routes[url] : null;
-  const routeFailed = Boolean(routeOverride && (routeOverride.failed || routeOverride.failures >= ROUTE_FAILURE_LIMIT));
+  const routeFailed = Boolean(routeOverride && routeOverride.failures >= ROUTE_FAILURE_LIMIT);
   if (routeFailed) return null;
   const routeDelay = typeof route === 'object' ? route.delay_ms : undefined;
   const delayMs = toFiniteNumber(routeDelay) ?? toFiniteNumber(channel.delay_ms) ?? 0;
   return { url, index, delay_ms: delayMs, failures: routeOverride ? routeOverride.failures : 0 };
 }
 
-function sortRoutes(routes, routeOrder) {
-  if (!routeOrder || routeOrder.length === 0) {
-    return routes.sort((left, right) => left.delay_ms - right.delay_ms || left.index - right.index);
-  }
-  const orderIndex = new Map(routeOrder.map((item, index) => [item, index]));
+function sortRoutes(routes, routeOrder, routeStrategy = 'latency-first') {
+  const orderIndex = new Map((routeOrder || []).map((item, index) => [item, index]));
   return routes.sort((left, right) => {
     const leftOrder = getOrderIndex(orderIndex, left.url, left.index);
     const rightOrder = getOrderIndex(orderIndex, right.url, right.index);
     if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    if (routeStrategy === 'source-quality') {
+      const leftQuality = getSourceQuality(left);
+      const rightQuality = getSourceQuality(right);
+      if (leftQuality !== rightQuality) return rightQuality - leftQuality;
+    }
     return left.delay_ms - right.delay_ms || left.index - right.index;
   });
+}
+
+function getSourceQuality(route) {
+  let score = 0;
+  try {
+    const parsed = new URL(route.url);
+    if (parsed.protocol === 'https:') score += 2;
+  } catch {}
+  if (route.failures === 0) score += 1;
+  return score;
 }
 
 function getOrderIndex(orderIndex, url, index) {
@@ -306,6 +317,19 @@ export async function fetchAndMergeRemoteChannels(sourceUrl) {
   if (remoteNormalized.length === 0) return { ok: false, count: 0 };
 
   const isPrivateSource = Boolean(sourceUrl && String(sourceUrl).trim() && String(sourceUrl).trim() !== CONFIG.remote_json_url);
+  if (!isPrivateSource) {
+    const stablePublicCount = Array.isArray(state.publicChannels) && state.publicChannels.length > 0
+      ? state.publicChannels.length
+      : state.allChannels.filter((channel) => !channel.sourceId || makeSourceId(channel.sourceId) === 'public').length;
+    const minimumCandidateCount = stablePublicCount > 0
+      ? Math.max(1, Math.ceil(stablePublicCount * 0.8))
+      : 1;
+    if (remoteNormalized.length < minimumCandidateCount) {
+      console.warn(`[OWL IPTV] 云端候选数据不完整 (${remoteNormalized.length}/${stablePublicCount})，保留稳定频道列表。`);
+      return { ok: false, count: 0, reason: 'incomplete-candidate' };
+    }
+  }
+
   if (isPrivateSource) {
     const sourceId = makeSourceId(url);
     const existing = state.privateSources.filter((source) => source.sourceId !== sourceId);

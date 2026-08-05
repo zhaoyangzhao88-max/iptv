@@ -1,4 +1,5 @@
 import { electronAPI } from './constants.js';
+import { sanitizeUrl } from './urlPolicy.js';
 import { state, els, getStorage, writeJsonToStorage,
   loadLocalOverrides, normalizeLocalOverrides } from './state.js';
 import { playChannel, destroyHlsInstance, resumeBackgroundTimers,
@@ -12,28 +13,24 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// ─── Test single channel ──────────────────────────────
+function getDiagnosticRoutes(channel) {
+  if (Array.isArray(channel.routes) && channel.routes.length > 0) {
+    return channel.routes.filter((route) => route && typeof route.url === 'string' && route.url);
+  }
+  return channel.url ? [{ url: channel.url }] : [];
+}
 
-function testSingleChannel(channel) {
+function testRoute(video, route) {
   return new Promise((resolve) => {
-    const video = els.video;
-    const result = {
-      name: channel.name,
-      group: channel.group,
-      url: channel.url,
-      routeCount: channel.routes ? channel.routes.length : 0,
-      status: 'unknown',
-      reason: ''
-    };
-
     let resolved = false;
     let timeupdateCount = 0;
     let lastCurrentTime = 0;
     let playingFired = false;
-
+    let timer;
     const TIMEOUT_MS = 3500;
 
     const cleanup = () => {
+      clearTimeout(timer);
       video.removeEventListener('playing', onPlaying);
       video.removeEventListener('timeupdate', onTimeUpdate);
       video.removeEventListener('error', onError);
@@ -49,15 +46,11 @@ function testSingleChannel(channel) {
     const resolveOnce = (status, reason) => {
       if (resolved) return;
       resolved = true;
-      clearTimeout(timer);
       cleanup();
-      result.status = status;
-      result.reason = reason;
-      resolve(result);
+      resolve({ status, reason });
     };
 
     const onPlaying = () => { playingFired = true; };
-
     const onTimeUpdate = () => {
       if (video.currentTime > lastCurrentTime) {
         timeupdateCount++;
@@ -67,25 +60,19 @@ function testSingleChannel(channel) {
         resolveOnce('ok', '播放正常');
       }
     };
-
-    const onError = () => {
-      resolveOnce('error', '解码不支持(黑屏/格式错)');
-    };
+    const onError = () => resolveOnce('error', '播放检测失败');
 
     video.addEventListener('playing', onPlaying);
     video.addEventListener('timeupdate', onTimeUpdate);
     video.addEventListener('error', onError);
-
-    const timer = setTimeout(() => {
-      if (playingFired && timeupdateCount >= 2) {
-        resolveOnce('ok', '播放正常');
-      } else {
-        resolveOnce('timeout', '连接超时(转圈)');
-      }
+    timer = setTimeout(() => {
+      resolveOnce(
+        playingFired && timeupdateCount >= 2 ? 'ok' : 'timeout',
+        playingFired && timeupdateCount >= 2 ? '播放正常' : '连接超时'
+      );
     }, TIMEOUT_MS);
 
     video.muted = true;
-
     if (window.Hls && window.Hls.isSupported()) {
       const diagHls = new window.Hls({
         enableWorker: true,
@@ -97,27 +84,52 @@ function testSingleChannel(channel) {
       });
       state._diagHls = diagHls;
       diagHls.attachMedia(video);
-      diagHls.loadSource(channel.url);
-
-      diagHls.on(window.Hls.Events.MANIFEST_PARSED, () => {
-        video.play().catch(() => {});
-      });
-
+      diagHls.loadSource(route.url);
+      diagHls.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
       diagHls.on(window.Hls.Events.ERROR, (event, data) => {
-        if (data && data.fatal) {
-          resolveOnce('error', '解码不支持(黑屏/格式错)');
-        }
+        if (data && data.fatal) resolveOnce('error', '播放检测失败');
       });
     } else {
-      video.src = channel.url;
+      video.src = route.url;
       video.play().catch(() => {});
     }
   });
 }
 
+// ─── Test single channel ──────────────────────────────
+
+export async function testSingleChannel(channel) {
+  const video = els.video;
+  const routes = getDiagnosticRoutes(channel);
+  const result = {
+    name: channel.name,
+    group: channel.group,
+    url: '',
+    routeCount: routes.length,
+    attemptCount: 0,
+    status: routes.length > 0 ? 'unknown' : 'error',
+    reason: routes.length > 0 ? '' : '无可用线路'
+  };
+
+  for (const route of routes) {
+    result.attemptCount++;
+    result.url = sanitizeUrl(route.url);
+    const attempt = await testRoute(video, route);
+    if (attempt.status === 'ok') {
+      result.status = 'ok';
+      result.reason = '播放正常';
+      return result;
+    }
+    result.status = attempt.status;
+    result.reason = attempt.status === 'timeout' ? '连接超时' : '播放检测失败';
+  }
+  return result;
+}
+
+
 // ─── Report generation ────────────────────────────────
 
-function generateReport(categoryLabel, results, isCapped = false) {
+export async function generateReport(categoryLabel, results, isCapped = false) {
   const now = new Date();
   const total = results.length;
   const okList = results.filter((r) => r.status === 'ok');
@@ -139,25 +151,23 @@ function generateReport(categoryLabel, results, isCapped = false) {
   md += `| ⏱️ 连接超时 | ${timeouts} |\n`;
   md += `| 可用率 | ${total > 0 ? ((ok / total) * 100).toFixed(1) : '0.0'}% |\n\n`;
   md += '## 频道明细\n\n';
-  md += '| # | 频道名 | 状态 | 失败原因 | 备用线数量 | 主播放URL |\n';
-  md += '|---|---|---|---|---|---|\n';
+  md += '| # | 频道名 | 状态 | 失败原因 | 尝试线路 | 线路总数 | 主播放URL |\n';
+  md += '|---|---|---|---|---|---|---|\n';
 
   results.forEach((r, i) => {
     const statusIcon = r.status === 'ok' ? '✅' : r.status === 'error' ? '❌' : '⏱️';
     const statusText = r.status === 'ok' ? '正常' : r.status === 'error' ? '解码失败' : '超时';
-    const reason = r.reason || '-';
-    md += `| ${i + 1} | ${r.name} | ${statusIcon} ${statusText} | ${reason} | ${r.routeCount} | ${r.url} |\n`;
+    const reason = r.status === 'ok' ? '播放正常' : r.status === 'timeout' ? '连接超时' : '播放检测失败';
+    const safeUrl = sanitizeUrl(r.url);
+    md += `| ${i + 1} | ${r.name} | ${statusIcon} ${statusText} | ${reason} | ${r.attemptCount || 0} | ${r.routeCount || 0} | ${safeUrl || '-'} |\n`;
   });
 
   md += '\n---\n*由 IPTV 智能巡检系统自动生成*\n';
 
   if (electronAPI) {
     try {
-      const reportPath = electronAPI.pathJoin(
-        electronAPI.getAppPath(), 'app', '..', 'data', 'playback_client_report.md'
-      );
-      electronAPI.writeFile(reportPath, md);
-      console.log('[OWL IPTV] 体检报告已保存：', reportPath);
+      await electronAPI.writeDiagnosticReport(md);
+      console.log('[OWL IPTV] 体检报告已保存到 userData/reports');
     } catch (e) {
       console.error('[OWL IPTV] 报告保存失败：', e);
     }
@@ -234,9 +244,13 @@ export async function runCategoryDiagnostic() {
     results.push(result);
 
     if (result.status === 'timeout' || result.status === 'error') {
-      channel.hidden = true;
-      const existing = state.localOverrides.channels[channel.name] || {};
-      state.localOverrides.channels[channel.name] = { ...existing, hidden: true };
+      // A failed probe is recoverable: keep the channel visible so they can retry
+      // or choose another route manually instead of permanently hiding it.
+      channel.hidden = false;
+      const existing = state.localOverrides.channels[channel.name];
+      if (existing) {
+        state.localOverrides.channels[channel.name] = { ...existing, hidden: undefined };
+      }
       writeJsonToStorage('owl_iptv_local_overrides', state.localOverrides);
     } else {
       channel.hidden = false;
