@@ -1,6 +1,12 @@
 node_modules/
 __pycache__/
 *.pyc
+*.log
+*.pid
+*.png
 .DS_Store
 .vscode/
 dist/
+.evidence-user-data*/
+test-evidence/
+2520

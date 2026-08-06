@@ -54,7 +54,7 @@ async function startNodeMicroservice() {
   try {
     nodeReadiness = { ...nodeReadiness, ready: false, error: null };
     nodeServerProcess = fork(serverPath, [], {
-      env: { ...process.env, PORT: '3000' },
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PORT: '3000' },
       stdio: 'pipe',
       silent: true,
     });

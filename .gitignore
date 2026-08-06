@@ -11,9 +11,17 @@ build/
 # Node.js
 node_modules/
 npm-debug.log*
+*.log
+*.pid
 
 # Build outputs
 dist/
+*.png
+
+# Local runtime and evidence data
+.evidence-user-data*/
+test-evidence/
+2520
 
 # IDE
 .vscode/

@@ -1,13 +1,37 @@
 [
   {
-    "name": "CCTV-1",
-    "group": "央视频道",
+    "name": "河北卫视",
+    "group": "卫视频道",
     "urls": [
-      "http://live.com/cctv.m3u8"
+      "https://event.pull.hebtv.com/live/live101.m3u8"
     ],
-    "delay_ms": 15,
-    "logo": "https://iptv-org.github.io/logos/CCTV1.png",
-    "tvg_id": "CCTV1.cn",
+    "delay_ms": 0,
+    "logo": "",
+    "tvg_id": "hebei-tv",
+    "is_multicast": false,
+    "risk_flags": []
+  },
+  {
+    "name": "安顺综合新闻",
+    "group": "地方频道",
+    "urls": [
+      "https://hplayer1.juyun.tv/camera/154379194.m3u8"
+    ],
+    "delay_ms": 0,
+    "logo": "",
+    "tvg_id": "anshun-news",
+    "is_multicast": false,
+    "risk_flags": []
+  },
+  {
+    "name": "吉林电视台",
+    "group": "地方频道",
+    "urls": [
+      "https://lsfb.avap.jilintv.cn/zqvk7vpj/channel/43ea5771aa44421591f9dfd2b71f1b9b/index.m3u8"
+    ],
+    "delay_ms": 0,
+    "logo": "",
+    "tvg_id": "jilin-tv",
     "is_multicast": false,
     "risk_flags": []
   }
