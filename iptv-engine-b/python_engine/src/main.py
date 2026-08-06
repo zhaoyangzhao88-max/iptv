@@ -6,7 +6,16 @@ import time
 import json
 from python_engine.src.fetcher import fetch_all_sources
 from python_engine.src.source_config import source_urls, source_id_for_url
-from python_engine.src.source_health import load_source_health, save_source_health, transition_state, update_source_health_batch
+from python_engine.src.source_health import (
+    load_source_health,
+    save_source_health,
+    transition_state,
+    update_source_health_batch,
+    select_recovery_source,
+    mark_recovery_attempt,
+    finalize_recovery,
+    compute_source_stats,
+)
 from python_engine.src.parser import parse_m3u_content, expand_m3u_streams
 from python_engine.src.blocklist import filter_blocked_streams
 from python_engine.src.merger import (
@@ -37,24 +46,33 @@ async def main() -> List[dict]:
     # 1. 抓取：并发抓取 5 大高质量 GitHub M3U 播放源 (Lesson 6)
     logger.info("[Step 1] 开始从显式授权源进行同步...")
     configured_urls = source_urls()
+    source_ids = [source_id_for_url(url) for url in configured_urls]
     health = load_source_health()
+    recovery_source_id = select_recovery_source(source_ids, health)
+    recovery_url = next((url for url in configured_urls if source_id_for_url(url) == recovery_source_id), None)
     active_urls = [
         url for url in configured_urls
         if health.get(source_id_for_url(url), {}).get("status") != "removed"
     ]
-    raw_m3u_dict = fetch_all_sources(active_urls)
-    for url in configured_urls:
-        source_id = source_id_for_url(url)
-        health[source_id] = transition_state(health.get(source_id), bool(raw_m3u_dict.get(url)))
-    save_source_health(health)
+    fetch_urls = active_urls + ([recovery_url] if recovery_url and recovery_url not in active_urls else [])
+    if recovery_source_id:
+        mark_recovery_attempt(health, recovery_source_id, timestamp=time.time())
+        save_source_health(health)
+    raw_m3u_dict = fetch_all_sources(fetch_urls)
     if not raw_m3u_dict:
+        save_source_health(health)
         raise RuntimeError("all configured sources failed; stable publication preserved")
 
     # 2. 解析：M3U #EXTINF 元数据像素级解析 (Lesson 7)
     logger.info("[Step 2] 开始对原始数据进行 #EXTINF 属性拆解...")
     all_raw_streams = []
+    recovery_valid_m3u = False
     for url, content in raw_m3u_dict.items():
-        all_raw_streams.extend(parse_m3u_content(content, source_id=url))
+        source_id = source_id_for_url(url)
+        parsed_streams = parse_m3u_content(content, source_id=source_id)
+        all_raw_streams.extend(parsed_streams)
+        if source_id == recovery_source_id and parsed_streams:
+            recovery_valid_m3u = True
     url_to_sources = {}
     for stream in all_raw_streams:
         if stream.source_id:
@@ -89,8 +107,23 @@ async def main() -> List[dict]:
     logger.info(f"-> 共有 {len(all_urls)} 条线路进入实时网络拨测流水线")
     probe_results = await probe_all_urls(all_urls, max_concurrent=50)
     if url_to_sources:
-        source_sync = {url: bool(raw_m3u_dict.get(url)) for url in raw_m3u_dict}
-        update_source_health_batch(source_sync, {url: url_to_sources[url] for url in set(all_urls) if url in url_to_sources}, probe_results)
+        source_sync = {source_id_for_url(url): bool(raw_m3u_dict.get(url)) for url in raw_m3u_dict}
+        update_source_health_batch(
+            source_sync,
+            {url: url_to_sources[url] for url in set(all_urls) if url in url_to_sources},
+            probe_results,
+        )
+    if recovery_source_id:
+        recovery_stats = compute_source_stats(url_to_sources, probe_results).get(recovery_source_id, {})
+        recovery_success = recovery_valid_m3u and recovery_stats.get("healthy_streams", 0) > 0
+        health = load_source_health()
+        health[recovery_source_id] = finalize_recovery(
+            health.get(recovery_source_id),
+            recovery_success,
+            healthy_streams=recovery_stats.get("healthy_streams", 0),
+            total_streams=recovery_stats.get("total_streams", 0),
+        )
+        save_source_health(health)
     successful_urls = {
         result.get('url') for result in probe_results
         if result.get('url') and result.get('success') is True

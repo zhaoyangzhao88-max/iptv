@@ -4,41 +4,57 @@
     "consecutive_failures": 3,
     "isolated_failures": 2,
     "total_streams": 0,
-    "healthy_streams": 0
+    "healthy_streams": 0,
+    "consecutive_recovery_successes": 0,
+    "last_recovery_attempt": 1785991382.4785504
   },
   "source_2": {
     "status": "removed",
     "consecutive_failures": 3,
     "isolated_failures": 2,
     "total_streams": 0,
-    "healthy_streams": 0
+    "healthy_streams": 0,
+    "consecutive_recovery_successes": 0,
+    "last_recovery_attempt": 1785991382.5084713
   },
   "source_3": {
     "status": "removed",
     "consecutive_failures": 3,
     "isolated_failures": 2,
     "total_streams": 0,
-    "healthy_streams": 0
+    "healthy_streams": 0,
+    "consecutive_recovery_successes": 0,
+    "last_recovery_attempt": 1785991405.4276445
   },
   "source_4": {
     "status": "removed",
     "consecutive_failures": 3,
     "isolated_failures": 2,
     "total_streams": 0,
-    "healthy_streams": 0
+    "healthy_streams": 0,
+    "consecutive_recovery_successes": 0,
+    "last_recovery_attempt": 1785991405.4583702
   },
   "source_5": {
     "status": "removed",
     "consecutive_failures": 3,
     "isolated_failures": 2,
     "total_streams": 0,
-    "healthy_streams": 0
+    "healthy_streams": 0,
+    "consecutive_recovery_successes": 0,
+    "last_recovery_attempt": null
   },
   "https://github.com/source1.m3u": {
     "status": "healthy",
     "consecutive_failures": 0,
     "isolated_failures": 0,
     "total_streams": 1,
-    "healthy_streams": 1
+    "healthy_streams": 1,
+    "consecutive_recovery_successes": 0,
+    "last_recovery_attempt": null
+  },
+  "_meta": {
+    "schema_version": 2,
+    "recovery_cursor": "source_4"
   }
 }
