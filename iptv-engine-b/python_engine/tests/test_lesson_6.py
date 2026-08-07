@@ -2,9 +2,14 @@ import pytest
 from unittest.mock import patch, MagicMock
 from python_engine.src.fetcher import fetch_all_sources, DEFAULT_SOURCES
 
+from python_engine.src.source_config import authorized_urls
+
+
 def test_default_sources_integrity():
-    """验证预设源数量及代理适配性"""
-    assert len(DEFAULT_SOURCES) == 5, "默认源必须是 5 个！"
+    """验证预设源集合非空、唯一且均为 GitHub 链接"""
+    assert DEFAULT_SOURCES
+    assert len(DEFAULT_SOURCES) == len(set(DEFAULT_SOURCES))
+    assert set(DEFAULT_SOURCES) == authorized_urls()
     for url in DEFAULT_SOURCES:
         assert "github" in url, "预设源必须是 GitHub 链接以确保后续继承代理 fallback 机制！"
 

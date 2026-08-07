@@ -167,11 +167,11 @@ __pycache__/
 - 定义三栏式 IPTV 播放界面
 - 引入本地 `style.css`
 - 引入后续创建的 `app/app.js`
-- 引入 Hls.js CDN：
+- 引入本地固定版本的 Hls.js bundle（`hls.js@1.6.16`），不使用 CDN `latest`：
 
 ```html
-<script defer src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-<script defer src="./app.js"></script>
+<script src="../node_modules/hls.js/dist/hls.min.js"></script>
+<script type="module" src="./app.js"></script>
 ```
 
 页面结构：
