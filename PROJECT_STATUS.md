@@ -4,7 +4,7 @@
 
 ## 当前目标
 
-本阶段目标已达成：补强 discovery 的隐私与篡改防护、重新验证当前 Python 全量测试、确认 hls.js 固定版本与打包内容、并用用户提供的公开 HLS 测试流做真实出画面验证。所有工作保持既有用户改动不覆盖、不提交、不推送。
+本阶段目标已达成：补强 discovery 的隐私与篡改防护、重新验证当前 Python 全量测试、确认 hls.js 固定版本与打包内容、用用户提供的公开 HLS 测试流做真实出画面验证，并为渲染器补充明确 CSP。代码改动已本地提交，但推送因当前环境无法访问 GitHub 而待定。
 
 ## 已完成内容
 
@@ -47,19 +47,38 @@
 
 ### 真实出画面验证（本轮新增证据）
 
-使用用户提供、无需鉴权的公开 HLS 测试流，通过 `window.owlIptv.playChannel()` 走真实播放器管线（player.js + 本地 hls.js 1.6.16）在真实 Electron 中验证：
+使用用户提供、无需鉴权的公开 HLS 测试流，通过 `window.owlIptv.playChannel()` 走真实播放器管线（player.js + 本地 hls.js 1.6.16）在真实 Electron 中验证（可复用探针 `iptv-project/scripts/real-playback-probe-url.cjs`，`PLAY_URL`/`RUN_NAME` 环境变量驱动）：
 
 1. **Mux TS 流** `https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8`
    - `readyState=4`、`paused=false`、`error=null`；`currentTime` 从 9.6s 推进到 13.6s（帧在动）。
    - 自适应码率：848×480 → **1920×1080**。
-   - 事件：`loadstart → loadedmetadata → canplay → playing`。
-   - 证据：`iptv-project/test-evidence/2026-08-07-public-hls-mux/`（含 frame.png、playback-state.json、renderer-console.log）。
+   - 证据：`iptv-project/test-evidence/2026-08-07-public-hls-mux/`。
 
 2. **Apple fMP4 流** `https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8`
    - `readyState=4`、播放中、`currentTime` 从 13.2s 推进到 17.2s、1920×1080、无媒体错误。
    - 证据：`iptv-project/test-evidence/2026-08-07-public-hls-apple-fmp4/`。
 
-两次运行都有少量 transient 事件（`waiting`/`bufferStalledError`/`bufferSeekOverHole`）但均自动恢复；`event.pull.hebtv.com/live/live101.m3u8` 的 `ERR_ABORTED` 是应用自动播放上一个已看频道被切换测试流时主动中止的预期行为。
+3. **Akamai 直播流** `https://cph-p2p-msl.akamaized.net/hls/live/2000341/test/master.m3u8`
+   - **未出画面**：源端返回 **404**（该测试 host 已退役）。播放器正确走 `levelLoadError → 重试 1 次 → 切换备用线路 → 标记频道不可用`，属于故障处理管线工作正常，非播放器缺陷。
+   - 证据：`iptv-project/test-evidence/2026-08-07-public-hls-akamai-live/`。
+
+4. **Unified Tears-of-Steel** `https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8`
+   - **未出画面**：manifest 获取在应用 1.5s 连接预算内超时（`manifestLoadTimeOut`），源站从当前网络不可达/过慢。播放器正确 `HLS 连接超时 → 切换备用线路 → 标记频道不可用`。
+   - 证据：`iptv-project/test-evidence/2026-08-07-public-hls-tears-of-steel/`。
+
+结论：播放器对**可到达的流真实出画面**（2/2，TS 与 fMP4 均验证）；不可达的 2 个流在两端都验证了故障处理管线正确。
+
+### 渲染器 CSP（本轮新增，已验证）
+
+- `app/index.html` 增加最小 CSP：`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https: wss: blob:; font-src 'self' data:; worker-src 'self' blob:`。
+- 效果：Electron `Insecure Content-Security-Policy` 安全告警已从渲染器日志消失（验证运行日志 0 条 CSP 警告）。
+- 兼容性：在 CSP 生效下重跑 Mux 流真实播放探针仍 `REAL-PLAYBACK OK`（readyState 4、帧推进、1080p）；Player 套件 33/33 通过。`'self'` 在 file:// 协议下可正常放行本地脚本。
+
+### 提交与推送状态
+
+- 本地已提交：`36412c2 feat: harden discovery source admission privacy`（discovery 隐私加固 + 测试 + 文档修正）。
+- 本地已提交：`1e842f4 feat: add renderer CSP and URL-driven playback probe`（CSP + 探针）。
+- **推送未完成**：当前环境无法访问 github.com / raw.githubusercontent.com（curl 与 git 均超时），`git push` 超时、`git ls-remote` 超时；`origin/master` 停在更早提交，本地 `master` ahead 3。网络恢复后执行 `git push origin master` 即可。
 
 ## 关键技术决策
 
@@ -98,12 +117,12 @@
 - `iptv-engine-b/python_engine/data/discovered_sources.json` 尚不存在：discovery 运行后会生成；当前为安全的空回退。
 - Node redirect allowlist 仍为相对宽泛的默认值；已确认暂不收窄，待实际 resolver host inventory 后再评估。
 - 没有正式 Windows `.ico` 与发布品牌信息；已确认延后。
-- 真实播放探针是人工验证工具，未接入 `npm test`；探针日志指出渲染器缺少明确的 Content-Security-Policy（Electron 安全告警，非播放失败）。
-- 探针运行会写入 `test-evidence/` 与临时 `user-data`，属于有意的人工验证产物，非只读。
+- 真实播放探针是人工验证工具，未接入 `npm test`；探针运行会写入 `test-evidence/` 与临时 `user-data`，属于有意的人工验证产物，非只读。
+- **推送待办**：`git push origin master` 需网络能访问 GitHub 时执行（当前环境 GitHub 不可达）。
 
 ## 下一步开发顺序
 
-1. （本阶段验证已完成）若用户需要，可运行 Akamai 直播流或 Tears-of-Steel 作第三条交叉验证。
-2. 正式决定是否把 CSP 加入渲染器（发布前安全收尾）。
-3. 决定是否提供 `.ico`/品牌信息，或是否提交/推送当前改动。
-4. 收到明确指示后再提交或推送；否则保持工作树原样。
+1. **推送**：网络恢复后执行 `git push origin master`（本地已有 3 个待推提交，含本轮 2 个）。
+2. 可选：接入真实直播源（如某平台公开直播地址）做第三条真实出画面交叉验证；当前 2/2 可到达流已验证。
+3. 决定是否提供 `.ico`/品牌信息。
+4. 收到明确指示后再做进一步改动；否则保持工作树原样。
